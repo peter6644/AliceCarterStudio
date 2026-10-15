@@ -1,57 +1,32 @@
-import Link from "next/link";
-import { getSession, getCurrentPeriod } from "@/lib/session";
+import { getSession } from "@/lib/session";
+import { getClasses } from "@/lib/data";
 import { signOut } from "@/app/login/actions";
+import Shell from "@/components/Shell";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { email, staff } = await getSession();
 
   if (!staff) {
     return (
-      <main style={{ minHeight: "100dvh", display: "grid", placeItems: "center", padding: 16 }}>
-        <div className="card" style={{ maxWidth: 420 }}>
-          <h2>No access yet</h2>
-          <p className="muted">
+      <div className="gate">
+        <div className="gatecard">
+          <img className="glogo" src="/logo.jpg" alt="" />
+          <div className="gtitle">No access yet</div>
+          <p style={{ color: "var(--ink-2)" }}>
             {email} is signed in, but isn&apos;t set up as studio staff. Ask the owner to add you.
           </p>
-          <form action={signOut}><button className="btn secondary">Sign out</button></form>
+          <form action={signOut}><button className="btn ghost">Sign out</button></form>
         </div>
-      </main>
+      </div>
     );
   }
 
-  const period = await getCurrentPeriod();
-  const isOwner = staff.role === "owner";
+  const classes = await getClasses();
+  const producerClass = classes.find((c) => String(c.id) === String(staff.class_id)) ?? null;
 
   return (
-    <div>
-      <header
-        style={{
-          display: "flex", alignItems: "center", gap: 16, padding: "12px 16px",
-          borderBottom: "1px solid var(--line)", background: "var(--paper-raised)", flexWrap: "wrap",
-        }}
-      >
-        <Link href="/" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
-          <div className="badge-logo">AC</div>
-          <span className="display" style={{ fontSize: 20 }}>Day Book</span>
-        </Link>
-        <nav style={{ display: "flex", gap: 14, flex: 1, flexWrap: "wrap" }}>
-          {isOwner ? (
-            <>
-              <Link href="/">Dashboard</Link>
-              <Link href="/students">Roster</Link>
-              <span className="muted">Scenes</span>
-              <span className="muted">Inquiries</span>
-            </>
-          ) : (
-            staff.class_id != null ? <Link href={`/class/${staff.class_id}`}>My class</Link> : <span className="muted">No class assigned</span>
-          )}
-        </nav>
-        <span className="muted" style={{ fontSize: 14 }}>
-          {period ? `Period ${period}` : "Period unknown"} · {isOwner ? "Owner" : "Producer"}
-        </span>
-        <form action={signOut}><button className="btn secondary" style={{ minHeight: 36 }}>Sign out</button></form>
-      </header>
-      <main style={{ padding: 16, maxWidth: 1100, margin: "0 auto" }}>{children}</main>
-    </div>
+    <Shell role={staff.role} classes={classes} producerClass={producerClass} signOut={signOut}>
+      {children}
+    </Shell>
   );
 }

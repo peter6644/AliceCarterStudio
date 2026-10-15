@@ -1,55 +1,111 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { getSession, getCurrentPeriod } from "@/lib/session";
-import { createClient } from "@/lib/supabase/server";
+import { notFound, redirect } from "next/navigation";
+import { getSession } from "@/lib/session";
+import { getClasses, getStudio, resolvePeriod } from "@/lib/data";
+import { clsAbbr, fmtD, weekNo } from "@/lib/format";
+import {
+  enrollmentsOf, isActive, isAway, isUnlimited, planCovered, recView, tradeValueOf,
+} from "@/lib/domain/money";
+import CheckIn, { type CIStudent, type PoolStudent } from "./CheckIn";
+import PeriodPicker from "@/components/PeriodPicker";
+import ClassScenes from "./ClassScenes";
 
-export default async function ClassPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ClassPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ period?: string }>;
+}) {
   const { id } = await params;
+  const { period: wantPeriod } = await searchParams;
   const { staff } = await getSession();
   const isOwner = staff?.role === "owner";
-  const period = await getCurrentPeriod();
-  const supabase = await createClient();
+  if (!isOwner && String(staff?.class_id) !== id) {
+    redirect(staff?.class_id != null ? `/class/${staff.class_id}` : "/");
+  }
 
-  // RLS returns nothing for classes a producer isn't assigned to.
-  const { data: cls } = await supabase
-    .from("classes")
-    .select("id, name, day, start_time, end_time")
-    .eq("id", id)
-    .maybeSingle();
+  const classes = await getClasses();
+  const cls = classes.find((c) => c.id === id);
   if (!cls) notFound();
 
-  const { data: roster } = await supabase
-    .from("enrollments")
-    .select("rate, students(id, name, status)")
-    .eq("class_id", id);
+  const { period, current, periods } = await resolvePeriod(wantPeriod);
+  const ix = await getStudio(String(period.n));
+  const className = new Map(classes.map((c) => [c.id, c.name]));
 
-  type Row = { rate: number | null; students: { id: string; name: string; status: string | null } | null };
-  const rows = ((roster ?? []) as unknown as Row[])
-    .filter((r) => r.students)
-    .sort((a, b) => a.students!.name.localeCompare(b.students!.name));
+  const inClass = (ix.inClass.get(id) ?? []).filter(isActive).sort((a, b) => a.name.localeCompare(b.name));
+  const initial: CIStudent[] = inClass.map((s) => ({
+    id: s.id,
+    name: s.name,
+    multi: enrollmentsOf(ix, s).length > 1,
+    unlimited: isUnlimited(s),
+    planCovered: planCovered(s, period),
+    isTrade: !!s.is_trade,
+    tradeValue: tradeValueOf(s),
+    away: isAway(ix, period.n, s.id),
+    rec: recView(ix, period.n, id, s),
+  }));
+
+  const pool: PoolStudent[] = ix.students
+    .filter((s) => !enrollmentsOf(ix, s).some((e) => String(e.class_id) === id))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      search: `${s.name} ${s.phone ?? ""} ${s.email ?? ""}`.toLowerCase(),
+      inactive: !isActive(s),
+      classes: enrollmentsOf(ix, s).map((e) => className.get(String(e.class_id)) ?? e.class_id).join(", "),
+    }));
+
+  const isCurrent = period.n === current.n;
+  const defaultWeek = isCurrent ? Math.min(3, Math.max(0, weekNo(period.start) - 1)) : 0;
 
   return (
     <>
-      <h1>{cls.name}</h1>
-      <p className="muted">
-        {cls.day} · {cls.start_time}{cls.end_time ? `–${cls.end_time}` : ""} · Period {period ?? "?"}
-      </p>
-      <section className="card" style={{ marginTop: 16 }}>
-        <h2>Roster ({rows.length})</h2>
-        <p className="muted" style={{ marginTop: -6 }}>Check-in and payments arrive in step 3.</p>
-        <table className="data">
-          <thead><tr><th>Student</th><th>Status</th><th className="num">Rate</th></tr></thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={r.students!.id}>
-                <td>{isOwner ? <Link href={`/students/${r.students!.id}`}>{r.students!.name}</Link> : r.students!.name}</td>
-                <td>{r.students!.status}</td>
-                <td className="num">{r.rate != null ? `$${r.rate}` : "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+      <div className="chapter" style={{ border: "none", paddingBottom: 8, marginBottom: 12 }}>
+        <div className="top">
+          <div>
+            <div className="eyebrow">
+              {cls.day} · {cls.start_time}–{cls.end_time}{cls.format ? ` · ${cls.format}` : ""}
+            </div>
+            <h1>{cls.name}</h1>
+          </div>
+          <PeriodPicker periods={periods} selected={period.n} current={current.n} />
+        </div>
+        {!isCurrent && (
+          <div className="desc" style={{ color: "var(--oxblood)" }}>
+            Viewing PP{period.n} ({fmtD(period.start)}–{fmtD(period.end)}). Changes here edit that past period.{" "}
+            <Link href={`/class/${id}`}>Back to current</Link>
+          </div>
+        )}
+      </div>
+
+      {isOwner && (
+        <div className="clsswitch">
+          {classes.map((x) => (
+            <Link
+              key={x.id}
+              className={`csw ${x.id === id ? "on" : ""}`}
+              href={`/class/${x.id}${isCurrent ? "" : `?period=${period.n}`}`}
+            >
+              <span className="cswb">{clsAbbr(x)}</span>
+              {x.name}
+            </Link>
+          ))}
+        </div>
+      )}
+
+      <CheckIn
+        key={`${id}-${period.n}`}
+        cls={cls}
+        period={period}
+        defaultWeek={defaultWeek}
+        initial={initial}
+        pool={pool}
+        isOwner={isOwner}
+      />
+
+      <ClassScenes cls={cls} period={period} />
     </>
   );
 }

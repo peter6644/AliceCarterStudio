@@ -1,181 +1,78 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireOwner } from "@/lib/owner";
-import { getCurrentPeriod } from "@/lib/session";
 import { createClient } from "@/lib/supabase/server";
-import { normalizeState, tally, STATE_LABEL } from "@/lib/domain/attendance";
-import StudentForm, { type EditableStudent } from "./StudentForm";
+import { getClasses, getStudio, resolvePeriod } from "@/lib/data";
+import { enrollmentsOf, isUnlimited, planCovered, recOut, recView, weeksOf } from "@/lib/domain/money";
+import type { Scene } from "@/lib/types";
+import StudentRecord, { type AttRow } from "./StudentRecord";
 
-type AttRow = {
-  period: number;
-  class_id: string | number;
-  week1: unknown; week2: unknown; week3: unknown; week4: unknown;
-  tuition_due: number | null;
-  paid_by: string | null;
-  amount_paid: number | null;
-  paid_date: string | null;
-};
-
-const money = (n: number | null | undefined) =>
-  n == null ? "—" : `$${Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
-
-export default async function StudentPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function StudentPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ welcome?: string }>;
+}) {
   await requireOwner();
   const { id } = await params;
-  const supabase = await createClient();
-  const current = await getCurrentPeriod();
+  const { welcome } = await searchParams;
+  const [{ period: p, periods }, classes, ix] = await Promise.all([resolvePeriod(), getClasses(), getStudio("all")]);
+  const s = ix.byId.get(id);
+  if (!s) notFound();
+  const en = enrollmentsOf(ix, s);
+  const clsName = new Map(classes.map((c) => [c.id, c.name]));
 
-  const { data: student } = await supabase.from("students").select("*").eq("id", id).maybeSingle();
-  if (!student) notFound();
-
-  const [classesRes, enrollRes, attRes, awayRes, planRes, scenesRes, statusRes] = await Promise.all([
-    supabase.from("classes").select("id, name").order("id"),
-    supabase.from("enrollments").select("class_id, rate").eq("student_id", id),
-    supabase
-      .from("attendance_records")
-      .select("period, class_id, week1, week2, week3, week4, tuition_due, paid_by, amount_paid, paid_date")
-      .eq("student_id", id)
-      .order("period", { ascending: false }),
-    supabase.from("away").select("period").eq("student_id", id),
-    supabase.from("plan_payments").select("period, amount, method, paid_date").eq("student_id", id).order("period", { ascending: false }),
-    supabase
-      .from("scenes")
-      .select("id, class_id, date, scene, work, complete, cancelled, actors")
-      .contains("actor_ids", [id])
-      .order("date", { ascending: false }),
-    supabase.from("students").select("status"),
-  ]);
-
-  const className = new Map((classesRes.data ?? []).map((c) => [String(c.id), c.name as string]));
-  const att = (attRes.data ?? []) as AttRow[];
-  const awayPeriods = new Set((awayRes.data ?? []).map((a) => a.period));
-  const overall = tally(att);
-  const statuses = [...new Set((statusRes.data ?? []).map((s) => s.status).filter(Boolean))] as string[];
-
-  // Attendance % per class across all periods
-  const byClass = new Map<string, AttRow[]>();
-  for (const r of att) {
-    const k = String(r.class_id);
-    byClass.set(k, [...(byClass.get(k) ?? []), r]);
+  // Attendance history — every period × class with anything marked (no make-ups; this is the record).
+  const att: AttRow[] = [];
+  let TA = 0, TM = 0;
+  for (const per of [...periods].reverse()) {
+    for (const e of en) {
+      const r = ix.rec.get(`${per.n}::${e.class_id}::${id}`);
+      if (!r) continue;
+      const w = weeksOf(r);
+      const a = w.filter((x) => x === "Worked" || x === "Present").length;
+      const ab = w.filter((x) => x === "Absent").length;
+      const cn = w.filter((x) => x === "Canceled").length;
+      const m = a + ab + cn;
+      if (!m) continue;
+      TA += a; TM += m;
+      att.push({ period: per.n, start: per.start, end: per.end, cls: clsName.get(String(e.class_id)) ?? String(e.class_id), weeks: w, a, ab, cn, pct: Math.round((a / m) * 100), away: ix.away.has(`${per.n}::${id}`) });
+    }
   }
 
+  // Scenes: linked by actor_ids, plus the original first-name match within their classes.
+  const sb = await createClient();
+  const cids = en.map((e) => String(e.class_id));
+  const [{ data: linked }, { data: inClasses }, { data: plans }] = await Promise.all([
+    sb.from("scenes").select("*").contains("actor_ids", [id]),
+    cids.length ? sb.from("scenes").select("*").in("class_id", cids) : Promise.resolve({ data: [] as Scene[] }),
+    sb.from("plan_payments").select("*").eq("student_id", id).order("period", { ascending: false }),
+  ]);
+  const fn = (s.name || "").trim().split(/\s+/)[0];
+  const rx = fn ? new RegExp(`(^|[^A-Za-z])${fn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^A-Za-z]|$)`, "i") : null;
+  const sceneMap = new Map<string, Scene>();
+  for (const x of (linked ?? []) as Scene[]) sceneMap.set(String(x.id), x);
+  for (const x of (inClasses ?? []) as Scene[]) if (rx && rx.test(x.actors || "") && !(x.actor_ids ?? []).length) sceneMap.set(String(x.id), x);
+  const scenes = [...sceneMap.values()]
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+    .map((x) => ({ id: String(x.id), scene: x.scene, cls: clsName.get(String(x.class_id)) ?? String(x.class_id), work: x.work, cancelled: !!x.cancelled, complete: !!x.complete, date: String(x.date).slice(0, 10) }));
+
+  const owes = isUnlimited(s) ? 0 : en.reduce((a, e) => a + recOut(recView(ix, p.n, String(e.class_id), s)), 0);
+
   return (
-    <>
-      <p style={{ margin: "0 0 8px" }}><Link href="/students" className="muted">← Roster</Link></p>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
-        <h1>{student.name}</h1>
-        {student.status && <span className="pill">{student.status}</span>}
-        {student.is_trade && <span className="pill moss">Trade</span>}
-        {current != null && awayPeriods.has(current) && <span className="pill oxblood">Away this period</span>}
-      </div>
-      <p className="muted">
-        {[student.phone, student.email].filter(Boolean).join(" · ") || "No contact info"}
-      </p>
-
-      <div className="metrics">
-        <div className="card metric">
-          <div className="metric-label">Attendance</div>
-          <div className="metric-value">{overall.pct == null ? "—" : `${overall.pct}%`}</div>
-          <div className="muted small">{overall.worked} worked · {overall.present} present · {overall.absent} absent</div>
-        </div>
-        <div className="card metric">
-          <div className="metric-label">Plan</div>
-          <div className="metric-value" style={{ fontSize: "1.4rem" }}>{student.plan || "Per class"}</div>
-          <div className="muted small">
-            {student.plan_amount ? `${money(student.plan_amount)} / ${student.plan_months ?? "?"} mo` : ""}
-            {student.paid_through ? ` · paid through ${student.paid_through}` : ""}
-          </div>
-        </div>
-        <div className="card metric">
-          <div className="metric-label">Classes</div>
-          <div className="small" style={{ marginTop: 6 }}>
-            {(enrollRes.data ?? []).map((e) => (
-              <div key={String(e.class_id)} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <Link href={`/class/${e.class_id}`}>{className.get(String(e.class_id)) ?? e.class_id}</Link>
-                <span className="num">{money(e.rate)}</span>
-              </div>
-            ))}
-            {!enrollRes.data?.length && <span className="muted">Not enrolled</span>}
-          </div>
-        </div>
-      </div>
-
-      <div className="two-col">
-        <section className="card" style={{ overflowX: "auto" }}>
-          <h2>Attendance history</h2>
-          {[...byClass.entries()].map(([cid, rows]) => {
-            const t = tally(rows);
-            return (
-              <div key={cid} style={{ marginBottom: 20 }}>
-                <h3 style={{ fontSize: "1rem", margin: "4px 0 6px" }}>
-                  {className.get(cid) ?? cid}{" "}
-                  <span className="muted" style={{ fontWeight: 400 }}>{t.pct == null ? "" : `· ${t.pct}%`}</span>
-                </h3>
-                <table className="data">
-                  <thead>
-                    <tr><th>Period</th><th>Wk 1</th><th>Wk 2</th><th>Wk 3</th><th>Wk 4</th><th className="num">%</th><th>Paid</th></tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((r) => {
-                      const pt = tally([r]);
-                      return (
-                        <tr key={`${r.period}-${cid}`}>
-                          <td>P{r.period}{awayPeriods.has(r.period) ? " · Away" : ""}</td>
-                          {[r.week1, r.week2, r.week3, r.week4].map((w, i) => {
-                            const s = normalizeState(w);
-                            return <td key={i}>{s ? <span className={`dot ${s}`}>{STATE_LABEL[s]}</span> : <span className="muted">·</span>}</td>;
-                          })}
-                          <td className="num">{pt.pct == null ? "—" : `${pt.pct}%`}</td>
-                          <td className="small">
-                            {r.paid_by || "—"}
-                            {r.amount_paid != null ? ` (partial ${money(r.amount_paid)})` : ""}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            );
-          })}
-          {!att.length && <p className="muted">No attendance recorded yet.</p>}
-
-          {(planRes.data ?? []).length > 0 && (
-            <>
-              <h2 style={{ marginTop: 12 }}>Plan payments</h2>
-              <table className="data">
-                <thead><tr><th>Period</th><th>Date</th><th>Method</th><th className="num">Amount</th></tr></thead>
-                <tbody>
-                  {(planRes.data ?? []).map((p, i) => (
-                    <tr key={i}><td>P{p.period}</td><td>{p.paid_date ?? "—"}</td><td>{p.method ?? "—"}</td><td className="num">{money(p.amount)}</td></tr>
-                  ))}
-                </tbody>
-              </table>
-            </>
-          )}
-
-          <h2 style={{ marginTop: 12 }}>Scene history</h2>
-          {(scenesRes.data ?? []).length ? (
-            <table className="data">
-              <thead><tr><th>Date</th><th>Class</th><th>Scene</th><th>Status</th></tr></thead>
-              <tbody>
-                {(scenesRes.data ?? []).map((s) => (
-                  <tr key={s.id}>
-                    <td>{s.date}</td>
-                    <td>{className.get(String(s.class_id)) ?? s.class_id}</td>
-                    <td>{s.scene}{s.work ? <span className="muted"> · {s.work}</span> : null}</td>
-                    <td>{s.cancelled ? "Canceled" : s.complete ? "Complete" : "In progress"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <p className="muted">{scenesRes.error ? scenesRes.error.message : "No scenes linked yet."}</p>
-          )}
-        </section>
-
-        <StudentForm student={{ ...(student as EditableStudent), id }} statuses={statuses} />
-      </div>
-    </>
+    <StudentRecord
+      student={s}
+      enrollments={en}
+      classes={classes}
+      period={p}
+      covered={planCovered(s, p)}
+      owes={owes}
+      away={ix.away.has(`${p.n}::${id}`)}
+      att={att}
+      attTotals={{ TA, TM, pct: TM ? Math.round((TA / TM) * 100) : null }}
+      scenes={scenes}
+      plans={(plans ?? []).map((x) => ({ period: Number(x.period), amount: Number(x.amount) || 0, method: x.method, paid_date: x.paid_date }))}
+      showWelcome={welcome === "1"}
+    />
   );
 }

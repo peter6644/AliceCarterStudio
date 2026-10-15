@@ -20,6 +20,8 @@ const eslintConfig = [
       "next-env.d.ts",
     ],
   },
+  // The studio logo is a small static badge; next/image adds nothing here.
+  { rules: { "@next/next/no-img-element": "off" } },
 ];
 
 export default eslintConfig;
