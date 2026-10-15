@@ -42,7 +42,9 @@ export const getSession = cache(async (): Promise<Session> => {
   if (!row) return { userId: user.id, email: user.email ?? null, staff: null, rawRole };
 
   const roleText = (rawRole ?? "").trim().toLowerCase();
-  const isOwner = ownerRes.error ? roleText === "owner" : ownerRes.data === true;
+  // Owner if either the stored role says so or the database's is_owner() agrees.
+  // (RLS still decides what data comes back either way.)
+  const isOwner = roleText === "owner" || (!ownerRes.error && ownerRes.data === true);
   const classId = (classRes.error ? null : classRes.data) ?? row.class_id ?? null;
 
   return {

@@ -22,6 +22,7 @@ export default async function DebugPage() {
   const period = await getCurrentPeriod();
   const supabase = await createClient();
 
+  const [ownerRpc, classRpc] = await Promise.all([supabase.rpc("is_owner"), supabase.rpc("my_class")]);
   const counts = await Promise.all(
     TABLES.map(async ([table, expected]) => {
       const { count, error } = await supabase.from(table).select("*", { count: "exact", head: true });
@@ -34,7 +35,8 @@ export default async function DebugPage() {
       <h1>Connection check</h1>
       <p className="muted">
         Signed in as {email} · app role: {staff?.role ?? "none (no staff row)"} · stored role: {rawRole == null ? "—" : JSON.stringify(rawRole)} · class: {staff?.class_id ?? "—"} ·
-        current_period(): {period ?? "error"}
+        current_period(): {period ?? "error"} · is_owner(): {ownerRpc.error ? `error: ${ownerRpc.error.message}` : JSON.stringify(ownerRpc.data)} ·
+        my_class(): {classRpc.error ? `error: ${classRpc.error.message}` : JSON.stringify(classRpc.data)}
       </p>
       <table className="data card">
         <thead><tr><th>Table</th><th className="num">Rows visible</th><th className="num">Expected</th><th></th></tr></thead>
