@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fmtFull, ordinal } from "@/lib/format";
 import type { ClassRow, Scene } from "@/lib/types";
 
+import EmailList from "./EmailList";
 import PasteScenes, { type ParsedScene } from "./PasteScenes";
 import PartnerPicker, { matchNames, splitActors, type PickStudent } from "./PartnerPicker";
 
@@ -72,8 +73,9 @@ async function insertMaster(row: Omit<Scene, "id" | "date">) {
 }
 
 export default function SceneList({
-  cls, classes, initial, students, curDate, weekDates,
+  cls, classes, initial, students, curDate, weekDates, recipients,
 }: {
+  recipients: { name: string; email: string }[];
   cls: ClassRow; classes: ClassRow[]; initial: Scene[]; students: PickStudent[]; curDate: string;
   /** The class's four meeting dates in this pay period. */
   weekDates: string[];
@@ -117,6 +119,7 @@ export default function SceneList({
   });
   const [customDate, setCustomDate] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
 
   async function addPasted(rows: ParsedScene[]) {
     const added: Scene[] = [];
@@ -380,6 +383,7 @@ export default function SceneList({
             : "Fresh weekly list — sent Friday for the following Monday. Tap a scene to reassign partners or note who picked it up."}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn ghost sm" onClick={() => setEmailOpen(true)}>Email list</button>
           <button className="btn ghost sm" onClick={() => setPasteOpen(true)}>Paste list</button>
           <button className="btn sm" onClick={newScene}><Icon name="plus" />Add scene</button>
         </div>
@@ -544,6 +548,17 @@ export default function SceneList({
             </div>
           </>
         )}
+      </Panel>
+
+      <Panel open={emailOpen} onClose={() => setEmailOpen(false)} head={<><div className="eyebrow">Email scene list</div><h2>{fmtShort(date)}</h2></>}>
+        <EmailList
+          cls={cls}
+          date={date}
+          weekNumber={(dates.indexOf(date) + 1) || (nextDates.indexOf(date) + 1) || 1}
+          scenes={onDate}
+          recipients={recipients}
+          onClose={() => setEmailOpen(false)}
+        />
       </Panel>
 
       <Panel open={pasteOpen} onClose={() => setPasteOpen(false)} head={<><div className="eyebrow">{cls.name}</div><h2>Paste to master list</h2></>}>

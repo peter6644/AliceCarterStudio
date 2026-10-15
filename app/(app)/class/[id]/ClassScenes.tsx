@@ -17,10 +17,14 @@ export default async function ClassScenes({ cls, period }: { cls: ClassRow; peri
 
   // Everyone on the roster can be a partner; this class's students are suggested first.
   const inClass = new Set((roster ?? []).map((r) => String(r.student_id)));
-  const { data: all } = await sb.from("students").select("id, name, status").order("name").range(0, 1999);
+  const { data: all } = await sb.from("students").select("id, name, status, email").order("name").range(0, 1999);
   const students = (all ?? [])
     .filter((s) => (s.status ?? "active") === "active" || inClass.has(String(s.id)))
     .map((s) => ({ id: String(s.id), name: String(s.name), inClass: inClass.has(String(s.id)) }));
+
+  const recipients = (all ?? [])
+    .filter((s) => inClass.has(String(s.id)) && (s.status ?? "active") === "active" && s.email && String(s.email).includes("@"))
+    .map((s) => ({ name: String(s.name), email: String(s.email).trim() }));
 
   const inPeriod = todayISO() >= period.start && todayISO() <= period.end;
   const wk = inPeriod ? Math.min(3, Math.max(0, weekNo(period.start) - 1)) : 0;
@@ -43,6 +47,7 @@ export default async function ClassScenes({ cls, period }: { cls: ClassRow; peri
           students={students}
           curDate={curDate}
           weekDates={weekDates}
+          recipients={recipients}
         />
       )}
     </div>
