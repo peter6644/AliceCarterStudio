@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fmtFull, ordinal } from "@/lib/format";
 import type { ClassRow, Scene } from "@/lib/types";
 
+import PasteScenes, { type ParsedScene } from "./PasteScenes";
 import PartnerPicker, { matchNames, splitActors, type PickStudent } from "./PartnerPicker";
 
 const fmtShort = (iso: string) =>
@@ -96,6 +97,28 @@ export default function SceneList({
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   });
   const [customDate, setCustomDate] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
+
+  async function addPasted(rows: ParsedScene[], when: string, work: number) {
+    const added: Scene[] = [];
+    for (const r of rows) {
+      const res = await insertScene({
+        class_id: cls.id, date: when, actors: r.actors, actor_ids: r.ids,
+        actor_other: r.others.length ? r.others.join(" & ") : null, scene: r.scene,
+        work: isWed ? work : null, complete: false, alternate: false, cancelled: false, picked_up_by: "", notes: "",
+      });
+      if (res.error) {
+        toast(`Added ${added.length} of ${rows.length}. Stopped at "${r.actors} – ${r.scene}": ${res.error.message}`, true);
+        break;
+      }
+      added.push({ ...(res.data as Scene), id: String(res.data.id), class_id: String(res.data.class_id), date: String(res.data.date).slice(0, 10) });
+    }
+    if (added.length) {
+      setScenes((xs) => [...xs, ...added]);
+      if (dates.includes(when) || when > weekDates[3]) setDate(when);
+      if (added.length === rows.length) { setPasteOpen(false); toast(`${added.length} scene${added.length === 1 ? "" : "s"} added to ${fmtFull(when)}`); }
+    }
+  }
   const upcoming = [...new Set(scenes.filter((x) => x.date > weekDates[3]).map((x) => x.date))].sort();
   const onDate = scenes.filter((s) => s.date === date);
   const main = onDate.filter((s) => !s.alternate);
@@ -218,7 +241,10 @@ export default function SceneList({
             ? "Rotating master list. Mark a scene cancelled to send it back into rotation; a pairing leaves after their 2nd work."
             : "Fresh weekly list — sent Friday for the following Monday. Tap a scene to reassign partners or note who picked it up."}
         </div>
-        <button className="btn sm" onClick={newScene}><Icon name="plus" />Add scene</button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn ghost sm" onClick={() => setPasteOpen(true)}>Paste list</button>
+          <button className="btn sm" onClick={newScene}><Icon name="plus" />Add scene</button>
+        </div>
       </div>
 
       <div className="week-switch">
@@ -265,6 +291,21 @@ export default function SceneList({
           )}
         </>
       )}
+
+      <Panel open={pasteOpen} onClose={() => setPasteOpen(false)} head={<><div className="eyebrow">{cls.name}</div><h2>Paste a scene list</h2></>}>
+        <PasteScenes
+          students={students}
+          isWed={isWed}
+          defaultDate={date}
+          dateGroups={[
+            { label: "This pay period", dates: dates.map((x) => ({ iso: x, label: fmtShort(x) })) },
+            { label: "Next pay period", dates: nextDates.map((x) => ({ iso: x, label: fmtShort(x) })) },
+            ...(![...dates, ...nextDates].includes(date) ? [{ label: "Selected", dates: [{ iso: date, label: fmtShort(date) }] }] : []),
+          ]}
+          onAdd={addPasted}
+          onCancel={() => setPasteOpen(false)}
+        />
+      </Panel>
 
       <Panel
         open={!!d}
