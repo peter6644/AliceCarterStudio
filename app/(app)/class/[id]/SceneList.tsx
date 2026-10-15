@@ -69,6 +69,7 @@ export default function SceneList({
   const nameOf = (id: string) => students.find((s) => s.id === id)?.name ?? id;
 
   function openScene(s: Scene) {
+    setCustomDate(false);
     const ids = (s.actor_ids ?? []).map(String);
     let others = splitActors(s.actor_other);
     let linked = ids;
@@ -82,11 +83,20 @@ export default function SceneList({
     setDraft({ ...s, actor_ids: linked });
   }
   function newScene() {
+    setCustomDate(false);
     setPartners({ ids: [], others: [], touched: true });
     setDraft(blank(cls.id, date));
   }
 
   const dates = weekDates;
+  // The class's next four meetings after this pay period, for planning ahead.
+  const nextDates = [1, 2, 3, 4].map((k) => {
+    const d = new Date(weekDates[3] + "T00:00");
+    d.setDate(d.getDate() + 7 * k);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
+  const [customDate, setCustomDate] = useState(false);
+  const upcoming = [...new Set(scenes.filter((x) => x.date > weekDates[3]).map((x) => x.date))].sort();
   const onDate = scenes.filter((s) => s.date === date);
   const main = onDate.filter((s) => !s.alternate);
   const alts = onDate.filter((s) => s.alternate);
@@ -146,9 +156,11 @@ export default function SceneList({
     setSaving(false);
     const norm = { ...saved, id: String(saved.id), class_id: String(saved.class_id), date: String(saved.date).slice(0, 10) };
     setScenes((xs) => (id ? xs.map((x) => (x.id === id ? norm : x)) : [...xs, norm]).filter((x) => x.class_id === cls.id));
-    if (norm.class_id === cls.id) setDate(norm.date);
+    const inView = dates.includes(norm.date);
+    if (norm.class_id === cls.id && inView) setDate(norm.date);
     setDraft(null);
-    toast("Saved to list");
+    setCustomDate(false);
+    toast(inView ? "Saved to list" : `Saved for ${fmtFull(norm.date)} — it'll show in that week's list`);
   }
 
   async function remove() {
@@ -214,6 +226,14 @@ export default function SceneList({
         {dates.map((x) => (
           <button key={x} className={`chip ${x === date ? "on" : ""}`} onClick={() => setDate(x)}>{fmtShort(x)}</button>
         ))}
+        {upcoming.length > 0 && (
+          <>
+            <span className="wk-label" style={{ marginLeft: 6 }}>Coming up</span>
+            {upcoming.map((x) => (
+              <button key={x} className={`chip ${x === date ? "on" : ""}`} style={x === date ? undefined : { borderStyle: "dashed" }} onClick={() => setDate(x)}>{fmtShort(x)}</button>
+            ))}
+          </>
+        )}
       </div>
 
       {main.length || alts.length ? (
@@ -285,9 +305,28 @@ export default function SceneList({
               )}
               <div className="field">
                 <label>Week of</label>
-                <select value={d.date} onChange={(e) => setDraft({ ...d, date: e.target.value })}>
-                  {[...new Set([...dates, d.date])].sort().map((x) => <option key={x} value={x}>{fmtFull(x)}</option>)}
-                </select>
+                {customDate ? (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input type="date" value={d.date} onChange={(e) => e.target.value && setDraft({ ...d, date: e.target.value })} />
+                    <button type="button" className="btn ghost sm" onClick={() => setCustomDate(false)}>List</button>
+                  </div>
+                ) : (
+                  <select
+                    value={d.date}
+                    onChange={(e) => (e.target.value === "__other" ? setCustomDate(true) : setDraft({ ...d, date: e.target.value }))}
+                  >
+                    <optgroup label="This pay period">
+                      {dates.map((x) => <option key={x} value={x}>{fmtShort(x)}</option>)}
+                    </optgroup>
+                    <optgroup label="Next pay period">
+                      {nextDates.map((x) => <option key={x} value={x}>{fmtShort(x)}</option>)}
+                    </optgroup>
+                    {![...dates, ...nextDates].includes(d.date) && (
+                      <optgroup label="Saved date"><option value={d.date}>{fmtShort(d.date)}</option></optgroup>
+                    )}
+                    <option value="__other">Other date…</option>
+                  </select>
+                )}
               </div>
             </div>
             {dWed ? (
