@@ -26,7 +26,7 @@ const normDate = (d: unknown) => (d ? String(d).slice(0, 10) : "");
 const normScene = (x: Scene): Scene => ({ ...x, id: String(x.id), class_id: String(x.class_id), date: normDate(x.date) });
 
 /** Master list (rotation pool) — ported from the original poolFor(); unscheduled entries count as "not yet worked". */
-function poolFor(scenes: Scene[]) {
+function poolFor(scenes: Scene[], today: string) {
   const g = new Map<string, Scene[]>();
   for (const x of scenes) {
     const k = `${x.actors}|${x.scene}`;
@@ -34,16 +34,22 @@ function poolFor(scenes: Scene[]) {
   }
   return [...g.entries()]
     .map(([key, a]) => {
-      a.sort((x, y) => x.date.localeCompare(y.date));
+      a.sort((x, y) => normDate(x.date).localeCompare(normDate(y.date)));
       const complete = a.some((z) => z.complete && !z.cancelled);
-      const dw = a.filter((z) => !z.cancelled).map((z) => z.work || 0);
-      const worksDone = dw.length ? Math.max(...dw) : 0;
-      const last = a[a.length - 1];
-      const next = last.cancelled ? last.work || 1 : worksDone + 1;
-      const label = last.cancelled
-        ? `cancelled — re-run ${ordinal(last.work || 1)}`
-        : worksDone ? `${ordinal(worksDone)} work latest` : "not yet worked";
-      return { key, first: a[0], complete, next, label };
+      // The undated master entry's "work" = works already done before they were tracked here.
+      const master = a.find((z) => isUnscheduled(z.date)) ?? null;
+      const dated = a.filter((z) => !isUnscheduled(z.date));
+      const live = a.filter((z) => !z.cancelled);
+      const worksDone = Math.max(0, ...live.map((z) => z.work || 0));
+      const last = dated[dated.length - 1];
+      const upcoming = dated.filter((z) => !z.cancelled && z.date >= today).pop() ?? null;
+      const next = last?.cancelled ? last.work || 1 : worksDone + 1;
+      const priorDone = master?.work || 0;
+      let label: string;
+      if (upcoming) label = `${upcoming.work ? ordinal(upcoming.work) + " work" : "Scheduled"} · ${new Date(upcoming.date + "T00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`;
+      else if (last?.cancelled) label = `cancelled — re-run ${ordinal(last.work || 1)}`;
+      else label = worksDone ? `${ordinal(worksDone)} work done` : "not yet worked";
+      return { key, first: master ?? a[0], master, priorDone, complete, next, label, upcoming };
     })
     .filter((z) => !z.complete);
 }
@@ -135,7 +141,8 @@ export default function SceneList({
   const onDate = scenes.filter((s) => s.date === date);
   const main = onDate.filter((s) => !s.alternate);
   const alts = onDate.filter((s) => s.alternate);
-  const pool = poolFor(scenes);
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+  const pool = poolFor(scenes, today);
 
   async function patch(s: Scene, p: Partial<Scene>, msg: string) {
     const before = scenes;
@@ -145,15 +152,37 @@ export default function SceneList({
     else toast(msg);
   }
 
-  async function addPoolWork(g: ReturnType<typeof poolFor>[number]) {
-    const f = g.first;
+  // "Schedule" picker for a master-list pairing.
+  const [sched, setSched] = useState<{ g: ReturnType<typeof poolFor>[number]; date: string; work: number; custom: boolean } | null>(null);
+
+  async function schedulePair() {
+    if (!sched) return;
+    const f = sched.g.first;
     const res = await insertScene({
-      class_id: cls.id, date, actors: f.actors, actor_ids: f.actor_ids ?? [], actor_other: f.actor_other,
-      scene: f.scene, work: isWed ? g.next : null, complete: false, alternate: false, cancelled: false, picked_up_by: "", notes: "",
+      class_id: cls.id, date: sched.date, actors: f.actors, actor_ids: f.actor_ids ?? [], actor_other: f.actor_other,
+      scene: f.scene, work: isWed ? sched.work : null, complete: false, alternate: false, cancelled: false, picked_up_by: "", notes: "",
     });
-    if (res.error) return toast(`Couldn't add: ${res.error.message}`, true);
+    if (res.error) return toast(`Couldn't schedule: ${res.error.message}`, true);
     setScenes((xs) => [...xs, normScene(res.data as Scene)]);
-    toast(`${isWed ? `${ordinal(g.next)} work` : "Scene"} added to ${fmtFull(date)}`);
+    if (dates.includes(sched.date)) setDate(sched.date);
+    toast(`${f.actors} · ${isWed ? ordinal(sched.work) + " work" : "scene"} on ${fmtFull(sched.date)}`);
+    setSched(null);
+  }
+
+  /** Record how many works a pairing had before (no dates needed). */
+  async function setPriorDone(g: ReturnType<typeof poolFor>[number], n: number) {
+    if (g.master) {
+      await patch(g.master, { work: n }, n ? `${ordinal(n)} work marked done` : "Reset to not yet worked");
+      return;
+    }
+    const f = g.first;
+    const res = await insertMaster({
+      class_id: cls.id, actors: f.actors, actor_ids: f.actor_ids ?? [], actor_other: f.actor_other, scene: f.scene,
+      work: n, complete: false, alternate: false, cancelled: false, picked_up_by: "", notes: "",
+    });
+    if (res.error) return toast(`Couldn't save: ${res.error.message}`, true);
+    setScenes((xs) => [...xs, normScene(res.data as Scene)]);
+    toast(`${ordinal(n)} work marked done`);
   }
 
   /** Retire a pairing from the pool: mark its latest work complete. */
@@ -369,12 +398,29 @@ export default function SceneList({
           {pool.length ? (
             <div className="ledger">
               {pool.map((g) => (
-                <div key={g.key} className="rec static">
-                  <div className="who"><div><div className="nm">{g.first.actors}</div><div className="ct">{g.first.scene} · {g.label}</div><UnlinkedNote x={g.first} /></div></div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <div key={g.key} className="rec static" style={{ gridTemplateColumns: "1fr", gap: 10 }}>
+                  <div className="who"><div style={{ minWidth: 0 }}>
+                    <div className="nm">{g.first.actors}</div>
+                    <div className="ct">{g.first.scene} · <b style={{ color: g.upcoming ? "var(--moss)" : "inherit" }}>{g.label}</b></div>
+                    <UnlinkedNote x={g.first} />
+                  </div></div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    {isWed && (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-3)" }}>
+                        Already done
+                        <span className="seg" style={{ display: "inline-flex" }}>
+                          {[0, 1, 2].map((n) => (
+                            <button key={n} type="button" className={g.priorDone === n ? "on" : ""} style={{ padding: "5px 10px", flex: "none" }}
+                              onClick={() => g.priorDone !== n && setPriorDone(g, n)}>{n}</button>
+                          ))}
+                        </span>
+                      </span>
+                    )}
+                    <button className="btn sm" onClick={() => setSched({ g, date: dates.includes(date) ? date : curDate, work: g.next, custom: false })}>
+                      {isWed ? `Schedule ${ordinal(g.next)} work…` : "Schedule…"}
+                    </button>
                     <button className="btn ghost sm" onClick={() => openPair(g.first)}>Edit names</button>
-                    <button className="btn ghost sm" onClick={() => addPoolWork(g)}>{isWed ? `Add ${ordinal(g.next)} work` : "Add to this week"} · {fmtShort(date)}</button>
-                    <button className="btn ghost sm" style={{ color: "var(--moss)", borderColor: "var(--moss)" }} onClick={() => markPoolComplete(g)}>✓ Mark complete</button>
+                    <button className="btn ghost sm" style={{ color: "var(--moss)", borderColor: "var(--moss)" }} onClick={() => markPoolComplete(g)}>✓ Complete</button>
                   </div>
                 </div>
               ))}
@@ -407,6 +453,48 @@ export default function SceneList({
             <div className="field">
               <label>Scene</label>
               <input value={pair.title} onChange={(e) => setPair({ ...pair, title: e.target.value })} />
+            </div>
+          </>
+        )}
+      </Panel>
+
+      <Panel
+        open={!!sched}
+        onClose={() => setSched(null)}
+        head={<><div className="eyebrow">Schedule</div><h2>{sched?.g.first.actors}</h2></>}
+        foot={<>
+          <button className="btn ghost" onClick={() => setSched(null)}>Cancel</button>
+          <button className="btn" onClick={schedulePair}>Add to {sched ? fmtShort(sched.date) : ""}</button>
+        </>}
+      >
+        {sched && (
+          <>
+            <p style={{ marginTop: 0, color: "var(--ink-2)", fontSize: 13 }}>{sched.g.first.scene}</p>
+            {isWed && (
+              <div className="field">
+                <label>Which work</label>
+                <div className="seg">
+                  {[1, 2, 3].map((n) => (
+                    <button key={n} type="button" className={sched.work === n ? "on" : ""} onClick={() => setSched({ ...sched, work: n })}>{ordinal(n)}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="field">
+              <label>Date</label>
+              {sched.custom ? (
+                <input type="date" value={sched.date} onChange={(e) => e.target.value && setSched({ ...sched, date: e.target.value })} />
+              ) : (
+                <>
+                  <div style={{ fontSize: 11, color: "var(--ink-3)", margin: "2px 0 6px" }}>This pay period</div>
+                  <div className="chips">{dates.map((x) => <button key={x} type="button" className={`chip ${sched.date === x ? "on" : ""}`} onClick={() => setSched({ ...sched, date: x })}>{fmtShort(x)}</button>)}</div>
+                  <div style={{ fontSize: 11, color: "var(--ink-3)", margin: "10px 0 6px" }}>Next pay period</div>
+                  <div className="chips">{nextDates.map((x) => <button key={x} type="button" className={`chip ${sched.date === x ? "on" : ""}`} onClick={() => setSched({ ...sched, date: x })}>{fmtShort(x)}</button>)}</div>
+                </>
+              )}
+              <button type="button" className="btn ghost sm" style={{ marginTop: 10 }} onClick={() => setSched({ ...sched, custom: !sched.custom })}>
+                {sched.custom ? "Back to class dates" : "Other date…"}
+              </button>
             </div>
           </>
         )}
