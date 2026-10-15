@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fmtFull, ordinal } from "@/lib/format";
 import type { ClassRow, Scene } from "@/lib/types";
 
-type Lite = { id: string; name: string };
+import PartnerPicker, { matchNames, splitActors, type PickStudent } from "./PartnerPicker";
 
 const fmtShort = (iso: string) =>
   new Date(iso + "T00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
@@ -54,7 +54,7 @@ async function insertScene(row: Omit<Scene, "id">) {
 export default function SceneList({
   cls, classes, initial, students, curDate, weekDates,
 }: {
-  cls: ClassRow; classes: ClassRow[]; initial: Scene[]; students: Lite[]; curDate: string;
+  cls: ClassRow; classes: ClassRow[]; initial: Scene[]; students: PickStudent[]; curDate: string;
   /** The class's four meeting dates in this pay period. */
   weekDates: string[];
 }) {
@@ -64,6 +64,27 @@ export default function SceneList({
   const [date, setDate] = useState(() => curDate);
   const [draft, setDraft] = useState<Scene | null>(null);
   const [saving, setSaving] = useState(false);
+  // Partners for the scene being edited: linked roster ids + names not on the roster.
+  const [partners, setPartners] = useState<{ ids: string[]; others: string[]; touched: boolean }>({ ids: [], others: [], touched: false });
+  const nameOf = (id: string) => students.find((s) => s.id === id)?.name ?? id;
+
+  function openScene(s: Scene) {
+    const ids = (s.actor_ids ?? []).map(String);
+    let others = splitActors(s.actor_other);
+    let linked = ids;
+    if (!ids.length && s.actors) {
+      // Older scenes only have the names typed in — link them to students where it's clear.
+      const m = matchNames(splitActors(s.actors), students);
+      linked = m.ids;
+      others = [...others, ...m.others];
+    }
+    setPartners({ ids: linked, others, touched: false });
+    setDraft({ ...s, actor_ids: linked });
+  }
+  function newScene() {
+    setPartners({ ids: [], others: [], touched: true });
+    setDraft(blank(cls.id, date));
+  }
 
   const dates = weekDates;
   const onDate = scenes.filter((s) => s.date === date);
@@ -101,9 +122,12 @@ export default function SceneList({
   async function save() {
     if (!draft) return;
     const d = { ...draft };
-    const linked = students.filter((s) => (d.actor_ids ?? []).includes(s.id));
-    if (!d.actors?.trim() && linked.length) d.actors = linked.map((s) => s.name.split(" ")[0]).join(" & ");
-    if (!d.actors?.trim() || !d.scene?.trim()) return toast("Add partners and a scene", true);
+    d.actor_ids = partners.ids;
+    d.actor_other = partners.others.length ? partners.others.join(" & ") : null;
+    // Keep an existing pairing's wording (the rotation pool groups by it) unless partners changed.
+    const names = [...partners.ids.map(nameOf), ...partners.others];
+    if (!draft.id || partners.touched || !d.actors?.trim()) d.actors = names.join(" & ");
+    if (!names.length || !d.scene?.trim()) return toast("Add partners and a scene", true);
     const wed = classes.find((c) => c.id === d.class_id)?.day === "Wednesday";
     if (!wed) Object.assign(d, { work: null, complete: false, alternate: false, cancelled: false });
     else d.picked_up_by = "";
@@ -137,7 +161,7 @@ export default function SceneList({
   }
 
   const row = (s: Scene, n: number) => (
-    <div key={s.id} className={`slrow ${s.cancelled ? "cx" : ""}`} onClick={() => setDraft({ ...s, actor_ids: s.actor_ids ?? [] })}>
+    <div key={s.id} className={`slrow ${s.cancelled ? "cx" : ""}`} onClick={() => openScene(s)}>
       <div className="slnum">{n}</div>
       <div className="slmain">
         <div className="slpair">{s.actors}</div>
@@ -182,7 +206,7 @@ export default function SceneList({
             ? "Rotating master list. Mark a scene cancelled to send it back into rotation; a pairing leaves after their 2nd work."
             : "Fresh weekly list — sent Friday for the following Monday. Tap a scene to reassign partners or note who picked it up."}
         </div>
-        <button className="btn sm" onClick={() => setDraft(blank(cls.id, date))}><Icon name="plus" />Add scene</button>
+        <button className="btn sm" onClick={newScene}><Icon name="plus" />Add scene</button>
       </div>
 
       <div className="week-switch">
@@ -225,7 +249,7 @@ export default function SceneList({
       <Panel
         open={!!d}
         onClose={() => setDraft(null)}
-        head={<><div className="eyebrow">{d?.id ? "Edit list item" : "Add to list"}</div><h2>{d?.actors || "New scene"}</h2></>}
+        head={<><div className="eyebrow">{d?.id ? "Edit list item" : "Add to list"}</div><h2>{[...partners.ids.map(nameOf), ...partners.others].join(" & ") || d?.actors || "New scene"}</h2></>}
         foot={
           <>
             {d?.id
@@ -239,21 +263,12 @@ export default function SceneList({
           <>
             <div className="field">
               <label>{dWed ? "Pairing — partners fixed for Scene Study" : "Partners — edit to reassign"}</label>
-              <input value={d.actors ?? ""} placeholder="e.g. Reece & Sariah" onChange={(e) => setDraft({ ...d, actors: e.target.value })} />
-            </div>
-            <div className="field">
-              <label>Link to students (for their scene history)</label>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {students.map((s) => {
-                  const on = (d.actor_ids ?? []).includes(s.id);
-                  return (
-                    <button key={s.id} type="button" className={`checkpill ${on ? "on" : ""}`}
-                      onClick={() => setDraft({ ...d, actor_ids: on ? (d.actor_ids ?? []).filter((x) => x !== s.id) : [...(d.actor_ids ?? []), s.id] })}>
-                      {s.name}
-                    </button>
-                  );
-                })}
-              </div>
+              <PartnerPicker
+                students={students}
+                ids={partners.ids}
+                others={partners.others}
+                onChange={(ids, others) => setPartners({ ids, others, touched: true })}
+              />
             </div>
             <div className="field">
               <label>Scene</label>

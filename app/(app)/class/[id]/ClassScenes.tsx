@@ -11,16 +11,16 @@ export default async function ClassScenes({ cls, period }: { cls: ClassRow; peri
   const { staff } = await getSession();
   const [{ data: scenes, error }, { data: roster }, classes] = await Promise.all([
     sb.from("scenes").select("*").eq("class_id", cls.id).order("date"),
-    sb.from("enrollments").select("students(id, name, status)").eq("class_id", cls.id),
+    sb.from("enrollments").select("student_id").eq("class_id", cls.id),
     getClasses(),
   ]);
 
-  type R = { students: { id: string; name: string; status: string | null } | null };
-  const students = ((roster ?? []) as unknown as R[])
-    .map((r) => r.students)
-    .filter((s): s is NonNullable<R["students"]> => !!s && (s.status ?? "active") === "active")
-    .map((s) => ({ id: String(s.id), name: s.name }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // Everyone on the roster can be a partner; this class's students are suggested first.
+  const inClass = new Set((roster ?? []).map((r) => String(r.student_id)));
+  const { data: all } = await sb.from("students").select("id, name, status").order("name").range(0, 1999);
+  const students = (all ?? [])
+    .filter((s) => (s.status ?? "active") === "active" || inClass.has(String(s.id)))
+    .map((s) => ({ id: String(s.id), name: String(s.name), inClass: inClass.has(String(s.id)) }));
 
   const inPeriod = todayISO() >= period.start && todayISO() <= period.end;
   const wk = inPeriod ? Math.min(3, Math.max(0, weekNo(period.start) - 1)) : 0;
