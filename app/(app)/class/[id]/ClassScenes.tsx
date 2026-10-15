@@ -24,7 +24,8 @@ export default async function ClassScenes({ cls, period }: { cls: ClassRow; peri
 
   const inPeriod = todayISO() >= period.start && todayISO() <= period.end;
   const wk = inPeriod ? Math.min(3, Math.max(0, weekNo(period.start) - 1)) : 0;
-  const curDate = classWeekDate(period.start, cls.day, wk).iso;
+  const weekDates = [0, 1, 2, 3].map((i) => classWeekDate(period.start, cls.day, i).iso);
+  const curDate = weekDates[wk];
 
   return (
     <div className="cls-section">
@@ -41,6 +42,7 @@ export default async function ClassScenes({ cls, period }: { cls: ClassRow; peri
           initial={((scenes ?? []) as Scene[]).map((s) => ({ ...s, id: String(s.id), class_id: String(s.class_id), date: String(s.date).slice(0, 10) }))}
           students={students}
           curDate={curDate}
+          weekDates={weekDates}
         />
       )}
     </div>

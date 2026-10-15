@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Icon } from "@/components/icons";
 import Panel from "@/components/Panel";
 import { useToast } from "@/lib/useToast";
@@ -9,6 +9,9 @@ import { fmtFull, ordinal } from "@/lib/format";
 import type { ClassRow, Scene } from "@/lib/types";
 
 type Lite = { id: string; name: string };
+
+const fmtShort = (iso: string) =>
+  new Date(iso + "T00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
 const blank = (cid: string, date: string): Scene => ({
   id: "", class_id: cid, date, actors: "", actor_ids: [], actor_other: null, scene: "",
@@ -49,9 +52,11 @@ async function insertScene(row: Omit<Scene, "id">) {
 }
 
 export default function SceneList({
-  cls, classes, initial, students, curDate,
+  cls, classes, initial, students, curDate, weekDates,
 }: {
   cls: ClassRow; classes: ClassRow[]; initial: Scene[]; students: Lite[]; curDate: string;
+  /** The class's four meeting dates in this pay period. */
+  weekDates: string[];
 }) {
   const toast = useToast();
   const isWed = cls.day === "Wednesday";
@@ -60,7 +65,7 @@ export default function SceneList({
   const [draft, setDraft] = useState<Scene | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const dates = useMemo(() => [...new Set([curDate, ...scenes.map((s) => s.date)])].sort().reverse(), [scenes, curDate]);
+  const dates = weekDates;
   const onDate = scenes.filter((s) => s.date === date);
   const main = onDate.filter((s) => !s.alternate);
   const alts = onDate.filter((s) => s.alternate);
@@ -83,6 +88,14 @@ export default function SceneList({
     if (res.error) return toast(`Couldn't add: ${res.error.message}`, true);
     setScenes((xs) => [...xs, { ...(res.data as Scene), id: String(res.data.id), class_id: String(res.data.class_id), date: String(res.data.date).slice(0, 10) }]);
     toast(`${ordinal(g.next)} work added to ${fmtFull(date)}`);
+  }
+
+  /** Retire a pairing from the pool: mark its latest work complete. */
+  async function markPoolComplete(g: ReturnType<typeof poolFor>[number]) {
+    const group = scenes.filter((x) => `${x.actors}|${x.scene}` === g.key).sort((a, b) => a.date.localeCompare(b.date));
+    const target = [...group].reverse().find((x) => !x.cancelled) ?? group[group.length - 1];
+    if (!target) return;
+    await patch(target, { complete: true, cancelled: false }, `${g.first.actors} · ${g.first.scene} marked complete`);
   }
 
   async function save() {
@@ -175,12 +188,8 @@ export default function SceneList({
       <div className="week-switch">
         <span className="wk-label">Week of</span>
         {dates.map((x) => (
-          <button key={x} className={`chip ${x === date ? "on" : ""}`} onClick={() => setDate(x)}>{fmtFull(x)}</button>
+          <button key={x} className={`chip ${x === date ? "on" : ""}`} onClick={() => setDate(x)}>{fmtShort(x)}</button>
         ))}
-        <label className="wk-add">
-          + week
-          <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
-        </label>
       </div>
 
       {main.length || alts.length ? (
@@ -200,7 +209,10 @@ export default function SceneList({
               {pool.map((g) => (
                 <div key={g.key} className="rec static">
                   <div className="who"><div><div className="nm">{g.first.actors}</div><div className="ct">{g.first.scene} · {g.label}</div></div></div>
-                  <button className="btn ghost sm" onClick={() => addPoolWork(g)}>Add {ordinal(g.next)} work</button>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button className="btn ghost sm" onClick={() => addPoolWork(g)}>Add {ordinal(g.next)} work</button>
+                    <button className="btn ghost sm" style={{ color: "var(--moss)", borderColor: "var(--moss)" }} onClick={() => markPoolComplete(g)}>✓ Mark complete</button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -258,7 +270,9 @@ export default function SceneList({
               )}
               <div className="field">
                 <label>Week of</label>
-                <input type="date" value={d.date} onChange={(e) => setDraft({ ...d, date: e.target.value })} />
+                <select value={d.date} onChange={(e) => setDraft({ ...d, date: e.target.value })}>
+                  {[...new Set([...dates, d.date])].sort().map((x) => <option key={x} value={x}>{fmtFull(x)}</option>)}
+                </select>
               </div>
             </div>
             {dWed ? (
