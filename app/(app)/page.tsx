@@ -5,7 +5,18 @@ import { createClient } from "@/lib/supabase/server";
 
 export default async function Home() {
   const { staff } = await getSession();
-  if (staff?.role === "producer") redirect(`/class/${staff.class_id}`);
+  if (staff?.role === "producer") {
+    if (staff.class_id != null) redirect(`/class/${staff.class_id}`);
+    return (
+      <div className="card" style={{ maxWidth: 520 }}>
+        <h2>No class assigned</h2>
+        <p className="muted">
+          This login is set up as a producer but isn&apos;t linked to a class yet. The studio owner
+          needs to set <code>class_id</code> on your row in the <code>staff</code> table.
+        </p>
+      </div>
+    );
+  }
 
   const period = await getCurrentPeriod();
   const supabase = await createClient();

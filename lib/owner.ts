@@ -5,7 +5,7 @@ import { getSession } from "@/lib/session";
 export async function requireOwner() {
   const session = await getSession();
   if (session.staff?.role !== "owner") {
-    redirect(session.staff?.class_id ? `/class/${session.staff.class_id}` : "/");
+    redirect(session.staff?.class_id != null ? `/class/${session.staff.class_id}` : "/");
   }
   return session;
 }

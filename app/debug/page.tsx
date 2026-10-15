@@ -18,7 +18,7 @@ const TABLES = [
 
 /** Read-only connection check. Counts are what YOUR login can see under RLS. */
 export default async function DebugPage() {
-  const { email, staff } = await getSession();
+  const { email, staff, rawRole } = await getSession();
   const period = await getCurrentPeriod();
   const supabase = await createClient();
 
@@ -33,7 +33,7 @@ export default async function DebugPage() {
     <main style={{ padding: 16, maxWidth: 640, margin: "0 auto" }}>
       <h1>Connection check</h1>
       <p className="muted">
-        Signed in as {email} · role: {staff?.role ?? "none (no staff row)"} · class: {staff?.class_id ?? "—"} ·
+        Signed in as {email} · app role: {staff?.role ?? "none (no staff row)"} · stored role: {rawRole == null ? "—" : JSON.stringify(rawRole)} · class: {staff?.class_id ?? "—"} ·
         current_period(): {period ?? "error"}
       </p>
       <table className="data card">

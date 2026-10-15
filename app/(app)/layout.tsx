@@ -43,7 +43,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               <span className="muted">Inquiries</span>
             </>
           ) : (
-            <Link href={`/class/${staff.class_id}`}>My class</Link>
+            staff.class_id != null ? <Link href={`/class/${staff.class_id}`}>My class</Link> : <span className="muted">No class assigned</span>
           )}
         </nav>
         <span className="muted" style={{ fontSize: 14 }}>
