@@ -169,6 +169,23 @@ export default function SceneList({
     setSched(null);
   }
 
+  // Search the master list and drop a pairing onto the selected week.
+  const [addQ, setAddQ] = useState("");
+  const [adding, setAdding] = useState<string | null>(null);
+  async function addToWeek(g: ReturnType<typeof poolFor>[number]) {
+    const f = g.first;
+    setAdding(g.key);
+    const res = await insertScene({
+      class_id: cls.id, date, actors: f.actors, actor_ids: f.actor_ids ?? [], actor_other: f.actor_other,
+      scene: f.scene, work: isWed ? g.next : null, complete: false, alternate: false, cancelled: false, picked_up_by: "", notes: "",
+    });
+    setAdding(null);
+    if (res.error) return toast(`Couldn't add: ${res.error.message}`, true);
+    setScenes((xs) => [...xs, normScene(res.data as Scene)]);
+    setAddQ("");
+    toast(`${f.actors} added to ${fmtShort(date)}${isWed ? ` · ${ordinal(g.next)} work` : ""}`);
+  }
+
   /** Record how many works a pairing had before (no dates needed). */
   async function setPriorDone(g: ReturnType<typeof poolFor>[number], n: number) {
     if (g.master) {
@@ -391,6 +408,35 @@ export default function SceneList({
       ) : (
         <div className="ledger"><div className="empty"><span className="serif">No scenes this week</span>Use “Add scene” to build the {fmtFull(date)} list.</div></div>
       )}
+
+      <div className="addbar" style={{ marginTop: 12 }}>
+        <div style={{ flex: 1 }}>
+          <div className="search">
+            <Icon name="search" />
+            <input placeholder={`Add from master list to ${fmtShort(date)} — search a name or scene`} value={addQ} onChange={(e) => setAddQ(e.target.value)} />
+          </div>
+          {addQ.trim() && (() => {
+            const n = addQ.trim().toLowerCase();
+            const onThisDate = new Set(onDate.map((x) => `${x.actors}|${x.scene}`));
+            const hits = pool.filter((g) =>
+              !onThisDate.has(g.key) &&
+              [g.first.actors, g.first.scene, ...(g.first.actor_ids ?? []).map((i) => nameOf(String(i)))].join(" ").toLowerCase().includes(n)
+            );
+            return hits.length ? (
+              <div className="addresults">
+                {hits.slice(0, 8).map((g) => (
+                  <button key={g.key} className="addrow" disabled={adding === g.key} onClick={() => addToWeek(g)}>
+                    <span><span className="arn">{g.first.actors}</span><span className="art">{g.first.scene} · {g.label}</span></span>
+                    <span className="addplus">+ {isWed ? `${ordinal(g.next)} work` : "add"}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="ct" style={{ color: "var(--ink-3)", marginTop: 8 }}>Nothing on the master list matches — use “Add scene” for something new.</div>
+            );
+          })()}
+        </div>
+      </div>
 
       {(
         <>
