@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { matchNames, splitActors, type PickStudent } from "./PartnerPicker";
-import { ordinal } from "@/lib/format";
 
 export type ParsedScene = { actors: string; scene: string; ids: string[]; others: string[] };
 
@@ -31,18 +30,13 @@ export function parseSceneList(text: string, students: PickStudent[]): ParsedSce
 }
 
 export default function PasteScenes({
-  students, dateGroups, defaultDate, isWed, onAdd, onCancel,
+  students, onAdd, onCancel,
 }: {
   students: PickStudent[];
-  dateGroups: { label: string; dates: { iso: string; label: string }[] }[];
-  defaultDate: string;
-  isWed: boolean;
-  onAdd: (rows: ParsedScene[], date: string, work: number) => Promise<void>;
+  onAdd: (rows: ParsedScene[]) => Promise<void>;
   onCancel: () => void;
 }) {
   const [text, setText] = useState("");
-  const [date, setDate] = useState(defaultDate);
-  const [work, setWork] = useState(1);
   const [skip, setSkip] = useState<Set<number>>(new Set());
   const [busy, setBusy] = useState(false);
   const rows = useMemo(() => parseSceneList(text, students), [text, students]);
@@ -54,33 +48,12 @@ export default function PasteScenes({
     <>
       <p style={{ marginTop: 0, color: "var(--ink-2)", fontSize: 13 }}>
         Paste the list — one scene per line, like <i>1- Darren &amp; Shannon- The Apartment</i>. Names are matched to students
-        (this class first). Anything that can&apos;t be matched is still added by name; you can link it later by opening the scene.
+        (this class first) and the scenes go onto the master list — no week yet; schedule them from there. Anything that can&apos;t be matched is still added by name; you can link it later by opening the scene.
       </p>
       <div className="field">
         <label>List</label>
         <textarea rows={7} value={text} onChange={(e) => setText(e.target.value)} placeholder={"1- Darren & Shannon- The Apartment\n2- Clem & Shannon- Fight Club"} />
       </div>
-      <div className="row2">
-        <div className="field">
-          <label>Week of</label>
-          <select value={date} onChange={(e) => setDate(e.target.value)}>
-            {dateGroups.map((g) => (
-              <optgroup key={g.label} label={g.label}>
-                {g.dates.map((d) => <option key={d.iso} value={d.iso}>{d.label}</option>)}
-              </optgroup>
-            ))}
-          </select>
-        </div>
-        {isWed && (
-          <div className="field">
-            <label>Work</label>
-            <select value={work} onChange={(e) => setWork(Number(e.target.value))}>
-              {[1, 2, 3].map((n) => <option key={n} value={n}>{ordinal(n)} work</option>)}
-            </select>
-          </div>
-        )}
-      </div>
-
       {rows.length > 0 && (
         <>
           <div className="sect-lbl">Preview · {chosen.length} scene{chosen.length === 1 ? "" : "s"}</div>
@@ -118,9 +91,9 @@ export default function PasteScenes({
         <button
           className="btn"
           disabled={!chosen.length || busy}
-          onClick={async () => { setBusy(true); await onAdd(chosen, date, work); setBusy(false); }}
+          onClick={async () => { setBusy(true); await onAdd(chosen); setBusy(false); }}
         >
-          {busy ? "Adding…" : `Add ${chosen.length || ""} scene${chosen.length === 1 ? "" : "s"}`}
+          {busy ? "Adding…" : `Add ${chosen.length || ""} to master list`}
         </button>
       </div>
     </>

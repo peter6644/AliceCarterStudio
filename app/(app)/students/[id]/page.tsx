@@ -54,8 +54,8 @@ export default async function StudentPage({
   for (const x of (linked ?? []) as Scene[]) sceneMap.set(String(x.id), x);
   for (const x of (inClasses ?? []) as Scene[]) if (rx && rx.test(x.actors || "") && !(x.actor_ids ?? []).length) sceneMap.set(String(x.id), x);
   const scenes = [...sceneMap.values()]
-    .sort((a, b) => String(b.date).localeCompare(String(a.date)))
-    .map((x) => ({ id: String(x.id), scene: x.scene, cls: clsName.get(String(x.class_id)) ?? String(x.class_id), work: x.work, cancelled: !!x.cancelled, complete: !!x.complete, date: String(x.date).slice(0, 10) }));
+    .sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")))
+    .map((x) => ({ id: String(x.id), scene: x.scene, cls: clsName.get(String(x.class_id)) ?? String(x.class_id), work: x.work, cancelled: !!x.cancelled, complete: !!x.complete, date: x.date && String(x.date).slice(0, 10) !== "2000-01-01" ? String(x.date).slice(0, 10) : "" }));
 
   const owes = isUnlimited(s) ? 0 : en.reduce((a, e) => a + recOut(recView(ix, p.n, String(e.class_id), s)), 0);
 

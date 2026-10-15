@@ -39,7 +39,7 @@ export default async function ClassScenes({ cls, period }: { cls: ClassRow; peri
         <SceneList
           cls={cls}
           classes={staff?.role === "owner" ? classes : [cls]}
-          initial={((scenes ?? []) as Scene[]).map((s) => ({ ...s, id: String(s.id), class_id: String(s.class_id), date: String(s.date).slice(0, 10) }))}
+          initial={((scenes ?? []) as Scene[]).map((s) => ({ ...s, id: String(s.id), class_id: String(s.class_id), date: s.date ? String(s.date).slice(0, 10) : "" }))}
           students={students}
           curDate={curDate}
           weekDates={weekDates}

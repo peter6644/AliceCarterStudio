@@ -19,7 +19,13 @@ const blank = (cid: string, date: string): Scene => ({
   work: 1, complete: false, alternate: false, cancelled: false, picked_up_by: "", notes: "",
 });
 
-/** Rotation pool for Wednesday classes — ported from the original poolFor(). */
+/** Master-list entries have no week yet. Stored with no date, or this placeholder if the date column requires one. */
+const UNSCHEDULED = "2000-01-01";
+export const isUnscheduled = (d: string | null | undefined) => !d || d.slice(0, 10) === UNSCHEDULED;
+const normDate = (d: unknown) => (d ? String(d).slice(0, 10) : "");
+const normScene = (x: Scene): Scene => ({ ...x, id: String(x.id), class_id: String(x.class_id), date: normDate(x.date) });
+
+/** Master list (rotation pool) — ported from the original poolFor(); unscheduled entries count as "not yet worked". */
 function poolFor(scenes: Scene[]) {
   const g = new Map<string, Scene[]>();
   for (const x of scenes) {
@@ -49,6 +55,13 @@ async function insertScene(row: Omit<Scene, "id">) {
     const id = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
     res = await sb.from("scenes").insert({ ...row, id }).select("*").single();
   }
+  return res;
+}
+
+/** Add a master-list entry with no week. */
+async function insertMaster(row: Omit<Scene, "id" | "date">) {
+  let res = await insertScene({ ...row, date: null as unknown as string });
+  if (res.error && /null value in column "date"/i.test(res.error.message)) res = await insertScene({ ...row, date: UNSCHEDULED });
   return res;
 }
 
@@ -99,31 +112,30 @@ export default function SceneList({
   const [customDate, setCustomDate] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
 
-  async function addPasted(rows: ParsedScene[], when: string, work: number) {
+  async function addPasted(rows: ParsedScene[]) {
     const added: Scene[] = [];
     for (const r of rows) {
-      const res = await insertScene({
-        class_id: cls.id, date: when, actors: r.actors, actor_ids: r.ids,
+      const res = await insertMaster({
+        class_id: cls.id, actors: r.actors, actor_ids: r.ids,
         actor_other: r.others.length ? r.others.join(" & ") : null, scene: r.scene,
-        work: isWed ? work : null, complete: false, alternate: false, cancelled: false, picked_up_by: "", notes: "",
+        work: null, complete: false, alternate: false, cancelled: false, picked_up_by: "", notes: "",
       });
       if (res.error) {
         toast(`Added ${added.length} of ${rows.length}. Stopped at "${r.actors} – ${r.scene}": ${res.error.message}`, true);
         break;
       }
-      added.push({ ...(res.data as Scene), id: String(res.data.id), class_id: String(res.data.class_id), date: String(res.data.date).slice(0, 10) });
+      added.push(normScene(res.data as Scene));
     }
     if (added.length) {
       setScenes((xs) => [...xs, ...added]);
-      if (dates.includes(when) || when > weekDates[3]) setDate(when);
-      if (added.length === rows.length) { setPasteOpen(false); toast(`${added.length} scene${added.length === 1 ? "" : "s"} added to ${fmtFull(when)}`); }
+      if (added.length === rows.length) { setPasteOpen(false); toast(`${added.length} scene${added.length === 1 ? "" : "s"} added to the master list`); }
     }
   }
-  const upcoming = [...new Set(scenes.filter((x) => x.date > weekDates[3]).map((x) => x.date))].sort();
+  const upcoming = [...new Set(scenes.filter((x) => !isUnscheduled(x.date) && x.date > weekDates[3]).map((x) => x.date))].sort();
   const onDate = scenes.filter((s) => s.date === date);
   const main = onDate.filter((s) => !s.alternate);
   const alts = onDate.filter((s) => s.alternate);
-  const pool = isWed ? poolFor(scenes) : [];
+  const pool = poolFor(scenes);
 
   async function patch(s: Scene, p: Partial<Scene>, msg: string) {
     const before = scenes;
@@ -137,16 +149,16 @@ export default function SceneList({
     const f = g.first;
     const res = await insertScene({
       class_id: cls.id, date, actors: f.actors, actor_ids: f.actor_ids ?? [], actor_other: f.actor_other,
-      scene: f.scene, work: g.next, complete: false, alternate: false, cancelled: false, picked_up_by: "", notes: "",
+      scene: f.scene, work: isWed ? g.next : null, complete: false, alternate: false, cancelled: false, picked_up_by: "", notes: "",
     });
     if (res.error) return toast(`Couldn't add: ${res.error.message}`, true);
-    setScenes((xs) => [...xs, { ...(res.data as Scene), id: String(res.data.id), class_id: String(res.data.class_id), date: String(res.data.date).slice(0, 10) }]);
-    toast(`${ordinal(g.next)} work added to ${fmtFull(date)}`);
+    setScenes((xs) => [...xs, normScene(res.data as Scene)]);
+    toast(`${isWed ? `${ordinal(g.next)} work` : "Scene"} added to ${fmtFull(date)}`);
   }
 
   /** Retire a pairing from the pool: mark its latest work complete. */
   async function markPoolComplete(g: ReturnType<typeof poolFor>[number]) {
-    const group = scenes.filter((x) => `${x.actors}|${x.scene}` === g.key).sort((a, b) => a.date.localeCompare(b.date));
+    const group = scenes.filter((x) => `${x.actors}|${x.scene}` === g.key).sort((a, b) => normDate(a.date).localeCompare(normDate(b.date)));
     const target = [...group].reverse().find((x) => !x.cancelled) ?? group[group.length - 1];
     if (!target) return;
     await patch(target, { complete: true, cancelled: false }, `${g.first.actors} · ${g.first.scene} marked complete`);
@@ -195,6 +207,19 @@ export default function SceneList({
     toast("Master list updated");
   }
 
+  async function removePair() {
+    if (!pair) return;
+    const group = scenes.filter((x) => x.class_id === cls.id && x.actors === pair.actors && x.scene === pair.scene);
+    const dated = group.filter((x) => !isUnscheduled(x.date)).length;
+    if (!confirm(dated ? `Remove this pairing from the master list? This also removes its ${dated} scheduled week${dated === 1 ? "" : "s"}.` : "Remove this pairing from the master list?")) return;
+    const { error } = await createClient().from("scenes").delete().in("id", group.map((x) => x.id));
+    if (error) return toast(`Couldn't remove: ${error.message}`, true);
+    const ids = new Set(group.map((x) => x.id));
+    setScenes((xs) => xs.filter((x) => !ids.has(x.id)));
+    setPair(null);
+    toast("Removed from master list");
+  }
+
   async function save() {
     if (!draft) return;
     const d = { ...draft };
@@ -228,9 +253,9 @@ export default function SceneList({
       }
     }
     setSaving(false);
-    const norm = { ...saved, id: String(saved.id), class_id: String(saved.class_id), date: String(saved.date).slice(0, 10) };
+    const norm = normScene(saved);
     setScenes((xs) => (id ? xs.map((x) => (x.id === id ? norm : x)) : [...xs, norm]).filter((x) => x.class_id === cls.id));
-    const inView = dates.includes(norm.date);
+    const inView = dates.includes(norm.date) || isUnscheduled(norm.date);
     if (norm.class_id === cls.id && inView) setDate(norm.date);
     setDraft(null);
     setCustomDate(false);
@@ -338,9 +363,9 @@ export default function SceneList({
         <div className="ledger"><div className="empty"><span className="serif">No scenes this week</span>Use “Add scene” to build the {fmtFull(date)} list.</div></div>
       )}
 
-      {isWed && (
+      {(
         <>
-          <div className="sect-lbl">Rotation pool · master list ({pool.length})</div>
+          <div className="sect-lbl">{isWed ? "Rotation pool · master list" : "Master list"} ({pool.length})</div>
           {pool.length ? (
             <div className="ledger">
               {pool.map((g) => (
@@ -348,14 +373,14 @@ export default function SceneList({
                   <div className="who"><div><div className="nm">{g.first.actors}</div><div className="ct">{g.first.scene} · {g.label}</div><UnlinkedNote x={g.first} /></div></div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button className="btn ghost sm" onClick={() => openPair(g.first)}>Edit names</button>
-                    <button className="btn ghost sm" onClick={() => addPoolWork(g)}>Add {ordinal(g.next)} work</button>
+                    <button className="btn ghost sm" onClick={() => addPoolWork(g)}>{isWed ? `Add ${ordinal(g.next)} work` : "Add to this week"} · {fmtShort(date)}</button>
                     <button className="btn ghost sm" style={{ color: "var(--moss)", borderColor: "var(--moss)" }} onClick={() => markPoolComplete(g)}>✓ Mark complete</button>
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="ledger"><div className="empty">Pool is clear.</div></div>
+            <div className="ledger"><div className="empty">Master list is empty — use “Paste list” to add scenes.</div></div>
           )}
         </>
       )}
@@ -365,7 +390,7 @@ export default function SceneList({
         onClose={() => setPair(null)}
         head={<><div className="eyebrow">Master list · all works</div><h2>{[...partners.ids.map(nameOf), ...partners.others].join(" & ") || pair?.actors}</h2></>}
         foot={<>
-          <button className="btn ghost" onClick={() => setPair(null)}>Cancel</button>
+          <button className="btn ghost" onClick={removePair} style={{ color: "var(--oxblood)", borderColor: "var(--oxblood)" }}>Remove</button>
           <button className="btn" onClick={savePair} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
         </>}
       >
@@ -387,16 +412,9 @@ export default function SceneList({
         )}
       </Panel>
 
-      <Panel open={pasteOpen} onClose={() => setPasteOpen(false)} head={<><div className="eyebrow">{cls.name}</div><h2>Paste a scene list</h2></>}>
+      <Panel open={pasteOpen} onClose={() => setPasteOpen(false)} head={<><div className="eyebrow">{cls.name}</div><h2>Paste to master list</h2></>}>
         <PasteScenes
           students={students}
-          isWed={isWed}
-          defaultDate={date}
-          dateGroups={[
-            { label: "This pay period", dates: dates.map((x) => ({ iso: x, label: fmtShort(x) })) },
-            { label: "Next pay period", dates: nextDates.map((x) => ({ iso: x, label: fmtShort(x) })) },
-            ...(![...dates, ...nextDates].includes(date) ? [{ label: "Selected", dates: [{ iso: date, label: fmtShort(date) }] }] : []),
-          ]}
           onAdd={addPasted}
           onCancel={() => setPasteOpen(false)}
         />

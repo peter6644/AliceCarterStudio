@@ -239,7 +239,7 @@ export default function StudentRecord(props: {
                 <div className="hp">{x.scene}</div>
                 <div className="hd">{x.cls} · {x.work ? `${ordinal(x.work)} work` : "scene"}{x.cancelled ? " · cancelled" : x.complete ? " · complete" : ""}</div>
               </div>
-              <div className="hd">{fmtFull(x.date)}</div>
+              <div className="hd">{x.date ? fmtFull(x.date) : "Master list"}</div>
             </div>
           )) : <div className="ct" style={{ color: "var(--ink-3)" }}>No scenes linked to this student yet.</div>}
         </div>
