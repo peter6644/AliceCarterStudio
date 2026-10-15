@@ -152,6 +152,49 @@ export default function SceneList({
     await patch(target, { complete: true, cancelled: false }, `${g.first.actors} · ${g.first.scene} marked complete`);
   }
 
+  /** Apply pairing changes to every work of the same pairing in this class (the master list entry). */
+  async function updateGroup(origActors: string | null, origScene: string | null, patch: Partial<Scene>, exceptId?: string) {
+    const sibs = scenes.filter((x) => x.class_id === cls.id && x.actors === origActors && x.scene === origScene && x.id !== exceptId);
+    if (!sibs.length) return null;
+    const { error } = await createClient().from("scenes").update(patch).in("id", sibs.map((x) => x.id));
+    if (error) return error.message;
+    const ids = new Set(sibs.map((x) => x.id));
+    setScenes((xs) => xs.map((x) => (ids.has(x.id) ? { ...x, ...patch } : x)));
+    return null;
+  }
+
+  // Editing a master-list pairing (all its works at once).
+  const [pair, setPair] = useState<{ actors: string | null; scene: string | null; title: string } | null>(null);
+  function openPair(first: Scene) {
+    const ids = (first.actor_ids ?? []).map(String);
+    let others = splitActors(first.actor_other);
+    let linked = ids;
+    if (!ids.length && first.actors) {
+      const m = matchNames(splitActors(first.actors), students);
+      linked = m.ids;
+      others = [...others, ...m.others];
+    }
+    setPartners({ ids: linked, others, touched: false });
+    setPair({ actors: first.actors, scene: first.scene, title: first.scene ?? "" });
+  }
+  async function savePair() {
+    if (!pair) return;
+    const names = [...partners.ids.map(nameOf), ...partners.others];
+    if (!names.length || !pair.title.trim()) return toast("Add partners and a scene", true);
+    const patch: Partial<Scene> = {
+      actor_ids: partners.ids,
+      actor_other: partners.others.length ? partners.others.join(" & ") : null,
+      actors: partners.touched ? names.join(" & ") : pair.actors,
+      scene: pair.title.trim(),
+    };
+    setSaving(true);
+    const err = await updateGroup(pair.actors, pair.scene, patch);
+    setSaving(false);
+    if (err) return toast(`Couldn't save: ${err}`, true);
+    setPair(null);
+    toast("Master list updated");
+  }
+
   async function save() {
     if (!draft) return;
     const d = { ...draft };
@@ -176,6 +219,14 @@ export default function SceneList({
       if (res.error) { setSaving(false); return toast(`Couldn't save: ${res.error.message}`, true); }
       saved = res.data as Scene;
     }
+    // Keep the other works of this pairing in step (names, links, title).
+    if (id) {
+      const orig = scenes.find((x) => x.id === id);
+      if (orig && (orig.actors !== d.actors || orig.scene !== d.scene || JSON.stringify(orig.actor_ids ?? []) !== JSON.stringify(d.actor_ids ?? []))) {
+        const err = await updateGroup(orig.actors, orig.scene, { actors: d.actors, actor_ids: d.actor_ids, actor_other: d.actor_other, scene: d.scene }, id);
+        if (err) toast(`Saved this week, but other works of this pairing didn't update: ${err}`, true);
+      }
+    }
     setSaving(false);
     const norm = { ...saved, id: String(saved.id), class_id: String(saved.class_id), date: String(saved.date).slice(0, 10) };
     setScenes((xs) => (id ? xs.map((x) => (x.id === id ? norm : x)) : [...xs, norm]).filter((x) => x.class_id === cls.id));
@@ -195,12 +246,28 @@ export default function SceneList({
     toast("Removed from list");
   }
 
+  /** Names in a pairing that aren't attached to a student. */
+  const unlinked = (x: Scene) => {
+    const linked = (x.actor_ids ?? []).map((i) => nameOf(String(i)).toLowerCase());
+    const guests = splitActors(x.actor_other).map((g) => g.toLowerCase());
+    return splitActors(x.actors).filter((p) => {
+      if (guests.includes(p.toLowerCase())) return false; // added on purpose as "not on roster"
+      const lp = p.toLowerCase();
+      return !linked.some((n) => n === lp || n.startsWith(lp + " ") || n.split(" ")[0] === lp.split(" ")[0]);
+    });
+  };
+  const UnlinkedNote = ({ x }: { x: Scene }) => {
+    const u = unlinked(x);
+    return u.length ? <div className="ct" style={{ color: "var(--oxblood)", fontSize: 11.5 }}>? {u.join(", ")} not attached — tap to link</div> : null;
+  };
+
   const row = (s: Scene, n: number) => (
     <div key={s.id} className={`slrow ${s.cancelled ? "cx" : ""}`} onClick={() => openScene(s)}>
       <div className="slnum">{n}</div>
       <div className="slmain">
         <div className="slpair">{s.actors}</div>
         <div className="slscene">{s.scene}</div>
+        <UnlinkedNote x={s} />
       </div>
       <div className="slmeta">
         {isWed ? (
@@ -278,8 +345,9 @@ export default function SceneList({
             <div className="ledger">
               {pool.map((g) => (
                 <div key={g.key} className="rec static">
-                  <div className="who"><div><div className="nm">{g.first.actors}</div><div className="ct">{g.first.scene} · {g.label}</div></div></div>
+                  <div className="who"><div><div className="nm">{g.first.actors}</div><div className="ct">{g.first.scene} · {g.label}</div><UnlinkedNote x={g.first} /></div></div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button className="btn ghost sm" onClick={() => openPair(g.first)}>Edit names</button>
                     <button className="btn ghost sm" onClick={() => addPoolWork(g)}>Add {ordinal(g.next)} work</button>
                     <button className="btn ghost sm" style={{ color: "var(--moss)", borderColor: "var(--moss)" }} onClick={() => markPoolComplete(g)}>✓ Mark complete</button>
                   </div>
@@ -291,6 +359,33 @@ export default function SceneList({
           )}
         </>
       )}
+
+      <Panel
+        open={!!pair}
+        onClose={() => setPair(null)}
+        head={<><div className="eyebrow">Master list · all works</div><h2>{[...partners.ids.map(nameOf), ...partners.others].join(" & ") || pair?.actors}</h2></>}
+        foot={<>
+          <button className="btn ghost" onClick={() => setPair(null)}>Cancel</button>
+          <button className="btn" onClick={savePair} disabled={saving}>{saving ? "Saving…" : "Save"}</button>
+        </>}
+      >
+        {pair && (
+          <>
+            <p style={{ marginTop: 0, color: "var(--ink-2)", fontSize: 13 }}>
+              Changes apply to every work of this pairing in {cls.name}. Search a name to attach a student.
+            </p>
+            <div className="field">
+              <label>Pairing</label>
+              <PartnerPicker students={students} ids={partners.ids} others={partners.others}
+                onChange={(ids, others) => setPartners({ ids, others, touched: true })} />
+            </div>
+            <div className="field">
+              <label>Scene</label>
+              <input value={pair.title} onChange={(e) => setPair({ ...pair, title: e.target.value })} />
+            </div>
+          </>
+        )}
+      </Panel>
 
       <Panel open={pasteOpen} onClose={() => setPasteOpen(false)} head={<><div className="eyebrow">{cls.name}</div><h2>Paste a scene list</h2></>}>
         <PasteScenes
