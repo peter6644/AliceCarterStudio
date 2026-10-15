@@ -63,7 +63,7 @@ export default function StudentRecord(props: {
       setMergeOpen(false); setDup(null); setMergeQ("");
       router.refresh();
     } catch (e) {
-      toast(`Merge stopped partway: ${(e as Error).message}. Nothing was lost — try again.`, true);
+      toast(`Merge stopped partway: ${(e as Error).message}. Some items may already have moved — running Merge again finishes it.`, true);
     }
     setBusy(false);
   }
