@@ -73,6 +73,10 @@ export default async function StudentPage({
       scenes={scenes}
       plans={(plans ?? []).map((x) => ({ period: Number(x.period), amount: Number(x.amount) || 0, method: x.method, paid_date: x.paid_date }))}
       showWelcome={welcome === "1"}
+      others={ix.students.filter((x) => x.id !== id).map((x) => ({
+        ...x,
+        classes: enrollmentsOf(ix, x).map((e) => clsName.get(String(e.class_id)) ?? String(e.class_id)).join(", "),
+      }))}
     />
   );
 }

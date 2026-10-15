@@ -12,6 +12,7 @@ import { mailtoHref, template, type TemplateKey } from "@/lib/templates";
 import { today } from "@/lib/write";
 import type { ClassRow, Enrollment, Period, Student, Week } from "@/lib/types";
 import StudentEditor from "../StudentEditor";
+import { deleteStudent, dupScore, mergeStudents } from "@/lib/studentAdmin";
 
 export type AttRow = { period: number; start: string; end: string; cls: string; weeks: Week[]; a: number; ab: number; cn: number; pct: number; away: boolean };
 type SceneLite = { id: string; scene: string | null; cls: string; work: number | null; cancelled: boolean; complete: boolean; date: string };
@@ -29,6 +30,7 @@ function addMonths(base: string, m: number) {
 export default function StudentRecord(props: {
   student: Student; enrollments: Enrollment[]; classes: ClassRow[]; period: Period; covered: boolean; owes: number; away: boolean;
   att: AttRow[]; attTotals: { TA: number; TM: number; pct: number | null }; scenes: SceneLite[]; plans: PlanLite[]; showWelcome: boolean;
+  others: (Student & { classes: string })[];
 }) {
   const { student: s, enrollments, classes, period: p, covered, owes, att, attTotals, scenes, plans } = props;
   const router = useRouter();
@@ -37,6 +39,47 @@ export default function StudentRecord(props: {
   const [welcome, setWelcome] = useState(props.showWelcome);
   const [method, setMethod] = useState(s.pays_by && s.pays_by !== "Trade" ? s.pays_by : "Card");
   const [busy, setBusy] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
+  const [mergeQ, setMergeQ] = useState("");
+  const [dup, setDup] = useState<(Student & { classes: string }) | null>(null);
+  const [delOpen, setDelOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const likely = props.others
+    .map((o) => ({ o, sc: dupScore(s, o) }))
+    .filter((x) => x.sc >= 2)
+    .sort((a, b) => b.sc - a.sc)
+    .map((x) => x.o);
+  const mq = mergeQ.trim().toLowerCase();
+  const mergeList = mq
+    ? props.others.filter((o) => `${o.name} ${o.email ?? ""} ${o.phone ?? ""}`.toLowerCase().includes(mq)).slice(0, 12)
+    : likely.slice(0, 8);
+
+  async function doMerge() {
+    if (!dup) return;
+    setBusy(true);
+    try {
+      await mergeStudents(s, dup);
+      toast(`${dup.name} merged into ${s.name}`);
+      setMergeOpen(false); setDup(null); setMergeQ("");
+      router.refresh();
+    } catch (e) {
+      toast(`Merge stopped partway: ${(e as Error).message}. Nothing was lost — try again.`, true);
+    }
+    setBusy(false);
+  }
+
+  async function doDelete() {
+    setBusy(true);
+    try {
+      await deleteStudent(s.id);
+      toast(`${s.name} deleted`);
+      router.push("/students");
+      router.refresh();
+    } catch (e) {
+      setBusy(false);
+      toast(`Couldn't delete: ${(e as Error).message}`, true);
+    }
+  }
   const clsName = new Map(classes.map((c) => [c.id, c.name]));
   const unl = isUnlimited(s);
 
@@ -90,7 +133,10 @@ export default function StudentRecord(props: {
               {props.away && <span className="tag awaytag">Away this period</span>}
             </div>
           </div>
-          <button className="btn" onClick={() => setEditing(true)}>Edit</button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="btn ghost" onClick={() => setMergeOpen(true)}>Merge duplicate{likely.length ? ` (${likely.length} possible)` : ""}</button>
+            <button className="btn" onClick={() => setEditing(true)}>Edit</button>
+          </div>
         </div>
       </div>
 
@@ -155,6 +201,14 @@ export default function StudentRecord(props: {
           {sentRow("Tuition policy", s.tuition_sent, "tuition")}
           <div className="drow"><span className="l">Payment agreement</span><span className="r">{s.agreement_sent ? `Sent ${fmtFull(s.agreement_sent)}` : "Not sent"}</span></div>
           {!s.email && <p className="ct" style={{ color: "var(--ink-3)" }}>Add an email (Edit) to send these.</p>}
+
+          <div className="sect-lbl">Remove</div>
+          <p className="ct" style={{ color: "var(--ink-3)", fontSize: 12.5 }}>
+            Leaving the studio? Set them to <b>Inactive</b> (Edit) to keep their history. Delete only for mistakes and test entries.
+          </p>
+          <button className="btn ghost" style={{ color: "var(--oxblood)", borderColor: "var(--oxblood)" }} onClick={() => { setTyped(""); setDelOpen(true); }}>
+            Delete student…
+          </button>
         </div>
 
         <div className="dcol">
@@ -193,6 +247,75 @@ export default function StudentRecord(props: {
 
       <Panel open={editing} onClose={() => setEditing(false)} head={<><div className="eyebrow">Edit record</div><h2>{s.name}</h2></>}>
         <StudentEditor student={s} enrollments={enrollments} classes={classes} onDone={() => setEditing(false)} />
+      </Panel>
+
+      <Panel
+        open={mergeOpen}
+        onClose={() => { setMergeOpen(false); setDup(null); }}
+        head={<><div className="eyebrow">Merge duplicate</div><h2>Into {s.name}</h2></>}
+        foot={dup ? (
+          <>
+            <button className="btn ghost" onClick={() => setDup(null)}>Back</button>
+            <button className="btn" onClick={doMerge} disabled={busy}>{busy ? "Merging…" : `Merge ${dup.name} into this record`}</button>
+          </>
+        ) : undefined}
+      >
+        {!dup ? (
+          <>
+            <p style={{ marginTop: 0, color: "var(--ink-2)", fontSize: 13 }}>
+              Pick the duplicate. <b>{s.name}</b> (this record) is kept; the duplicate&apos;s classes, attendance, payments, Away marks
+              and scenes move here, then the duplicate is removed.
+            </p>
+            <div className="search" style={{ marginBottom: 12 }}>
+              <input placeholder="Search name, email or phone" value={mergeQ} onChange={(e) => setMergeQ(e.target.value)} style={{ paddingLeft: 12 }} />
+            </div>
+            {!mq && <div className="sect-lbl" style={{ marginTop: 0 }}>{likely.length ? "Likely duplicates" : "No obvious duplicates — search above"}</div>}
+            <div className="ledger">
+              {mergeList.map((o) => (
+                <div key={o.id} className="rec" style={{ gridTemplateColumns: "1fr auto" }} onClick={() => setDup(o)}>
+                  <div className="who"><div>
+                    <div className="nm">{o.name}{(o.status || "active") !== "active" ? " · inactive" : ""}</div>
+                    <div className="ct">{[o.email, o.phone, o.classes || "no classes"].filter(Boolean).join(" · ")}</div>
+                  </div></div>
+                  <span className="tag">Pick</span>
+                </div>
+              ))}
+              {mq && !mergeList.length && <div className="empty">No match.</div>}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="drow"><span className="l">Keep</span><span className="r">{s.name}</span></div>
+            <div className="drow"><span className="l">Remove</span><span className="r" style={{ color: "var(--oxblood)" }}>{dup.name}</span></div>
+            <div className="sect-lbl">What happens</div>
+            <ul style={{ color: "var(--ink-2)", fontSize: 13.5, paddingLeft: 18, lineHeight: 1.6 }}>
+              <li>Classes move over: {dup.classes || "none"}. Where both are in a class, {s.name}&apos;s rate stays.</li>
+              <li>Attendance and payments move over. Same period and class? Empty weeks and an unpaid record here get filled from the duplicate.</li>
+              <li>Away marks, plan payments and scene links move over.</li>
+              <li>Blank contact fields here are filled from the duplicate{dup.email && !s.email ? ` (email ${dup.email})` : ""}{dup.phone && !s.phone ? ` (phone ${dup.phone})` : ""}; notes are combined.</li>
+              <li>{dup.name} is then deleted. This can&apos;t be undone.</li>
+            </ul>
+          </>
+        )}
+      </Panel>
+
+      <Panel
+        open={delOpen}
+        onClose={() => setDelOpen(false)}
+        head={<><div className="eyebrow">Delete student</div><h2>{s.name}</h2></>}
+        foot={<>
+          <button className="btn ghost" onClick={() => setDelOpen(false)}>Cancel</button>
+          <button className="btn" style={{ background: "var(--oxblood)", borderColor: "var(--oxblood)" }}
+            disabled={busy || typed.trim().toLowerCase() !== s.name.trim().toLowerCase()} onClick={doDelete}>
+            {busy ? "Deleting…" : "Delete permanently"}
+          </button>
+        </>}
+      >
+        <p style={{ marginTop: 0, color: "var(--ink-2)" }}>
+          This permanently removes {s.name} along with their classes, attendance, payments, Away marks and scene links. It can&apos;t be undone.
+        </p>
+        <p style={{ color: "var(--ink-2)" }}>If they&apos;ve just left the studio, set them to <b>Inactive</b> instead — their history stays.</p>
+        <div className="field"><label>Type their name to confirm</label><input value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={s.name} /></div>
       </Panel>
 
       <Panel
