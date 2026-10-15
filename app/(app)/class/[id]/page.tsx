@@ -1,10 +1,12 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSession, getCurrentPeriod } from "@/lib/session";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function ClassPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  await getSession();
+  const { staff } = await getSession();
+  const isOwner = staff?.role === "owner";
   const period = await getCurrentPeriod();
   const supabase = await createClient();
 
@@ -40,7 +42,7 @@ export default async function ClassPage({ params }: { params: Promise<{ id: stri
           <tbody>
             {rows.map((r) => (
               <tr key={r.students!.id}>
-                <td>{r.students!.name}</td>
+                <td>{isOwner ? <Link href={`/students/${r.students!.id}`}>{r.students!.name}</Link> : r.students!.name}</td>
                 <td>{r.students!.status}</td>
                 <td className="num">{r.rate != null ? `$${r.rate}` : "—"}</td>
               </tr>

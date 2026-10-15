@@ -38,7 +38,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           {isOwner ? (
             <>
               <Link href="/">Dashboard</Link>
-              <span className="muted">Roster</span>
+              <Link href="/students">Roster</Link>
               <span className="muted">Scenes</span>
               <span className="muted">Inquiries</span>
             </>

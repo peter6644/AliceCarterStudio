@@ -69,3 +69,32 @@ table.data { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
 table.data th, table.data td { text-align: left; padding: 0.55rem 0.5rem; border-bottom: 1px solid var(--line); }
 table.data th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ink-soft); }
 .num { font-variant-numeric: tabular-nums; text-align: right !important; }
+
+.small { font-size: 0.85rem; }
+.field textarea {
+  padding: 0.6rem 0.8rem; border: 1px solid var(--line); border-radius: 10px;
+  background: #fff; color: var(--ink); font: inherit; resize: vertical;
+}
+.check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
+.check input { width: 20px; height: 20px; accent-color: var(--moss); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 16px; }
+
+.pill {
+  display: inline-block; margin-left: 6px; padding: 2px 10px; border-radius: 999px;
+  font-size: 0.75rem; font-weight: 600; border: 1px solid var(--line); background: var(--paper);
+}
+.pill.moss { background: var(--moss); color: var(--paper); border-color: var(--moss); }
+.pill.oxblood { background: var(--oxblood); color: var(--paper); border-color: var(--oxblood); }
+
+.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin: 16px 0; }
+.metric-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-soft); font-weight: 600; }
+.metric-value { font-family: var(--font-fraunces), serif; font-size: 2rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.two-col { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+.dot { font-size: 0.8rem; font-weight: 600; }
+.dot.worked { color: var(--moss); }
+.dot.present { color: var(--brass); }
+.dot.absent { color: var(--oxblood); }
+.dot.canceled { color: var(--ink-soft); text-decoration: line-through; }
