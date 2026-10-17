@@ -33,6 +33,8 @@ export type Student = {
   extras_sent: string | null;
   tuition_sent: string | null;
   agreement_sent: string | null;
+  /** Present only if the optional students.start_date column has been added. */
+  start_date?: string | null;
 };
 
 export type Enrollment = { student_id: Id; class_id: Id; rate: number | null };

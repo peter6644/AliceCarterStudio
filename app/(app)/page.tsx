@@ -88,7 +88,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
 
       <div className="stats">
         <div className="stat"><div className="k">Income · PP{p.n}</div><div className="v tnum">{money(t.income)}</div><div className="n">cash collected this session</div></div>
-        <Link className="stat" href={`/payments${qs}`} style={{ textDecoration: "none" }}>
+        <Link className="stat" href={`/payments${qs}#outstanding`} style={{ textDecoration: "none" }}>
           <div className="k">Outstanding</div>
           <div className="v tnum" style={{ color: t.out > 0 ? "var(--oxblood)" : "inherit" }}>{money(t.out)}</div>
           <div className="n">{t.owers.size} balance{t.owers.size === 1 ? "" : "s"} due ›</div>
@@ -121,7 +121,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
             {owers.length ? (
               <>
                 {owers.slice(0, 8).map(({ s, o }) => (
-                  <Link key={s.id} className="rec" href={`/students/${s.id}`}>
+                  <Link key={s.id} className="rec" href={`/payments?pay=${s.id}${isCurrent ? "" : `&period=${p.n}`}`}>
                     <div className="who"><div className="avatar">{initials(s.name)}</div>
                       <div><div className="nm">{s.name}</div>
                         <div className="ct">{isUnlimited(s) ? "Unlimited plan" : enrollmentsOf(ix, s).map((e) => clsName.get(String(e.class_id))).join(", ")}</div>

@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { requireOwner } from "@/lib/owner";
 import { getClasses, getStudio, resolvePeriod } from "@/lib/data";
-import { fmtD, initials, money } from "@/lib/format";
+import { fmtD, money } from "@/lib/format";
 import { classTotals, enrollmentsOf, isActive, isAway, isUnlimited, periodTotals, studentOwes } from "@/lib/domain/money";
-import { Icon } from "@/components/icons";
 import PeriodPicker from "@/components/PeriodPicker";
+import OutstandingList, { type OweRow } from "./OutstandingList";
+import { payStudent } from "@/lib/payData";
 
-export default async function PaymentsPage({ searchParams }: { searchParams: Promise<{ period?: string }> }) {
+export default async function PaymentsPage({ searchParams }: { searchParams: Promise<{ period?: string; pay?: string }> }) {
   await requireOwner();
-  const { period: want } = await searchParams;
+  const { period: want, pay: openId } = await searchParams;
   const [{ period: cp, current, periods }, classes] = await Promise.all([resolvePeriod(want), getClasses()]);
   const ix = await getStudio("all");
   const clsName = new Map(classes.map((c) => [c.id, c.name]));
@@ -19,12 +20,14 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
   const totTrade = rows.reduce((a, r) => a + r.trade, 0);
   const byClass = classes.map((c) => ({ c, ...classTotals(ix, cp, c.id) }));
 
-  const owe = ix.students
-    .filter((s) => isActive(s) && !isAway(ix, cp.n, s.id))
-    .map((s) => ({ s, o: studentOwes(ix, cp, s) }))
-    .filter((x) => x.o > 0)
-    .sort((a, b) => b.o - a.o);
-  const owedTotal = owe.reduce((a, x) => a + x.o, 0);
+  // Everyone active this period (not trades, not away) — the list shows who owes, and can show everyone.
+  const owe: OweRow[] = ix.students
+    .filter((s) => isActive(s) && !isAway(ix, cp.n, s.id) && !s.is_trade)
+    .map((s) => ({
+      student: payStudent(ix, cp, s, classes),
+      owes: studentOwes(ix, cp, s),
+      sub: isUnlimited(s) ? "Unlimited plan" : enrollmentsOf(ix, s).map((e) => clsName.get(String(e.class_id))).join(", "),
+    }));
   const cols = "1.5fr 1.4fr 1fr 1fr 1fr";
 
   return (
@@ -43,30 +46,8 @@ export default async function PaymentsPage({ searchParams }: { searchParams: Pro
         </div>
       </div>
 
-      <div className="sect-lbl">Outstanding · PP{cp.n}</div>
-      {owe.length ? (
-        <>
-          <div className="ledger">
-            {owe.map(({ s, o }) => (
-              <Link key={s.id} className="rec" href={`/students/${s.id}`}>
-                <div className="who"><div className="avatar">{initials(s.name)}</div>
-                  <div><div className="nm">{s.name}</div>
-                    <div className="ct">{isUnlimited(s) ? "Unlimited plan" : enrollmentsOf(ix, s).map((e) => clsName.get(String(e.class_id))).join(", ")}</div>
-                  </div>
-                </div>
-                <div style={{ justifySelf: "end", display: "flex", gap: 10, alignItems: "center" }}>
-                  <span className="pill due">{money(o)}</span><span className="arrow"><Icon name="arrow" /></span>
-                </div>
-              </Link>
-            ))}
-          </div>
-          <div style={{ marginTop: 10, fontSize: 14, color: "var(--ink-2)" }}>
-            <b>{owe.length}</b> student{owe.length === 1 ? "" : "s"} owing · <b style={{ color: "var(--oxblood)" }}>{money(owedTotal)}</b> outstanding this session
-          </div>
-        </>
-      ) : (
-        <div className="ledger"><div className="empty"><span className="serif">All settled</span>No balances due this session.</div></div>
-      )}
+      <div className="sect-lbl" id="outstanding">Outstanding · PP{cp.n}</div>
+      <OutstandingList rows={owe} period={cp} openId={openId} />
 
       <div className="sect-lbl">By session</div>
       <div className="ledger">

@@ -16,7 +16,11 @@ export default async function NewStudentPage({ searchParams }: { searchParams: P
   await requireOwner();
   const q = await searchParams;
   const [classes, ix] = await Promise.all([getClasses(), getStudio("none")]);
-  const student = { ...NEW_STUDENT, name: q.name ?? "", email: q.email ?? "", phone: q.phone ?? "", notes: q.notes ?? "" };
+  const hasStart = ix.students.some((x) => "start_date" in x);
+  const student = {
+    ...NEW_STUDENT, name: q.name ?? "", email: q.email ?? "", phone: q.phone ?? "", notes: q.notes ?? "",
+    ...(hasStart ? { start_date: new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }) } : {}),
+  };
   return (
     <>
       <div className="chapter"><div className="top"><div><div className="eyebrow">New student</div><h1>Add student</h1></div></div></div>

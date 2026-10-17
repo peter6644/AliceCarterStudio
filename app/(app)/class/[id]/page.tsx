@@ -44,6 +44,8 @@ export default async function ClassPage({
     tradeValue: tradeValueOf(s),
     away: isAway(ix, period.n, s.id),
     rec: recView(ix, period.n, id, s),
+    notes: s.notes,
+    startDate: s.start_date ? String(s.start_date).slice(0, 10) : null,
   }));
 
   const pool: PoolStudent[] = ix.students

@@ -20,6 +20,8 @@ export type CIStudent = {
   tradeValue: number;
   away: boolean;
   rec: Rec;
+  notes: string | null;
+  startDate: string | null;
 };
 
 export type PoolStudent = { id: string; name: string; search: string; inactive: boolean; classes: string };
@@ -51,6 +53,7 @@ export default function CheckIn({
   const [busy, setBusy] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [addRate, setAddRate] = useState(String(NEW_STUDENT_RATE));
+  const [noteOpen, setNoteOpen] = useState<string | null>(null);
 
   const roster = rows.filter((s) => !s.away);
   const away = rows.filter((s) => s.away);
@@ -244,6 +247,29 @@ export default function CheckIn({
                     </button>
                   ))}
                 </div>
+                {(s.notes || s.startDate || s.rec.notes) && (
+                  <div className="ct" style={{ marginTop: 8, fontSize: 12.5, color: "var(--brass-deep)", whiteSpace: "pre-wrap" }}>
+                    {s.startDate && <>Started {new Date(s.startDate + "T00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}. </>}
+                    {s.notes && <>📝 {s.notes}</>}
+                    {s.rec.notes && <div>PP{period.n}: {s.rec.notes}</div>}
+                  </div>
+                )}
+                {noteOpen === s.id ? (
+                  <div className="partial" style={{ width: "100%" }}>
+                    <input
+                      autoFocus
+                      style={{ flex: 1, width: "auto" }}
+                      defaultValue={s.rec.notes ?? ""}
+                      placeholder={`Note for PP${period.n} (e.g. paid for 5 classes)`}
+                      onBlur={(e) => { setNoteOpen(null); if ((e.target.value || "") !== (s.rec.notes || "")) update(s.id, { notes: e.target.value }, "Note saved"); }}
+                      onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+                    />
+                  </div>
+                ) : (
+                  <button type="button" className="btn ghost sm" style={{ marginTop: 8, fontSize: 11.5, padding: "3px 9px" }} onClick={() => setNoteOpen(s.id)}>
+                    {s.rec.notes ? "Edit note" : "+ Note"}
+                  </button>
+                )}
                 {cash && (
                   <label className="partial">
                     Paid

@@ -49,6 +49,7 @@ export default function StudentEditor({
       status: d.status || "active",
       notes: d.notes?.trim() || null,
       tags: tagsText.split(",").map((t) => t.trim()).filter(Boolean),
+      ...("start_date" in student ? { start_date: d.start_date || null } : {}),
       is_trade: plan === "trade",
       plan: plan === "unlimited" ? "unlimited" : "perclass",
     };
@@ -120,6 +121,11 @@ export default function StudentEditor({
         <div className="field"><label>Phone</label><input type="tel" value={d.phone ?? ""} onChange={(e) => set({ phone: e.target.value })} /></div>
         <div className="field"><label>Email</label><input type="email" value={d.email ?? ""} onChange={(e) => set({ email: e.target.value })} /></div>
       </div>
+      {"start_date" in student && (
+        <div className="field"><label>Start date</label>
+          <input type="date" value={(d.start_date ?? "").slice(0, 10)} onChange={(e) => set({ start_date: e.target.value || null })} />
+        </div>
+      )}
       <div className="field"><label>Emergency contact</label><input value={d.emergency ?? ""} onChange={(e) => set({ emergency: e.target.value })} /></div>
       <div className="field"><label>Status</label>
         <div className="seg">
