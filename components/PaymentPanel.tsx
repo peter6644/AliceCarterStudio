@@ -198,14 +198,18 @@ export default function PaymentPanel({
                   )}
                 </div>
                 {perClass > 0 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                    <span className="ct" style={{ color: "var(--ink-3)", alignSelf: "center", fontSize: 12 }}>Classes:</span>
-                    {[3, 4, 5, 6].map((n) => (
-                      <button key={n} type="button" className={`chip ${Math.abs(due - perClass * n) < 0.01 ? "on" : ""}`} style={{ padding: "5px 10px" }}
-                        onClick={() => setRec(i, { tuition_due: Math.round(perClass * n * 100) / 100 })}>
-                        {n} · {money(perClass * n)}
-                      </button>
-                    ))}
+                  <div style={{ marginBottom: 10 }}>
+                    <div className="ct" style={{ color: "var(--ink-3)", fontSize: 12, marginBottom: 6 }}>
+                      Charge for a different number of classes ({money(r.rate)} rate ÷ 4 = {money(perClass)} a class):
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {[3, 4, 5, 6].map((n) => (
+                        <button key={n} type="button" className={`chip ${Math.abs(due - perClass * n) < 0.01 ? "on" : ""}`} style={{ padding: "6px 11px" }}
+                          onClick={() => setRec(i, { tuition_due: Math.round(perClass * n * 100) / 100 })}>
+                          {n} classes = {money(perClass * n)}{n === 4 ? " (normal)" : ""}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
                 {cash && (
@@ -215,7 +219,7 @@ export default function PaymentPanel({
                   </div>
                 )}
                 <div className="field" style={{ marginBottom: 0 }}>
-                  <label>Note for this period</label>
+                  <label>Note for this period (this class only)</label>
                   <input value={r.rec.notes ?? ""} placeholder="e.g. paid for 5 classes to line up with the pay period"
                     onChange={(e) => setRec(i, { notes: e.target.value })} />
                 </div>
